@@ -72,12 +72,14 @@ KDTree::Point::Point(const Point& p)
 {
   STORE_POINT(pt,p.pt);
   id = p.id;
+  pnter = p.pnter;
 }
 
 const KDTree::Point& KDTree::Point::operator = (const Point& p)
 {
   STORE_POINT(pt,p.pt);
   id = p.id;
+  pnter = p.pnter;
   return *this;
 }
 
@@ -235,6 +237,8 @@ KDTree* KDTree::Insert(const Vector& p,int id,int maxLeafPoints)
   //just add to the node
   node->pts.resize(node->pts.size()+1);
   STORE_POINT(node->pts.back().pt,p);
+  if(id == -1)
+    id = TreeSize();
   node->pts.back().id = id;
   if((int)node->pts.size() >= maxLeafPoints) {
     //split
@@ -363,8 +367,8 @@ void KDTree::_ClosestPoint(const Vector& pt,Real& dist,int& idx) const
     for(size_t i=0;i<pts.size();i++) {
       Real d=Distance_L2(pts[i].pt,pt);
       if(d < dist) {
-	idx=pts[i].id;
-	dist = d;
+        idx=pts[i].id;
+        dist = d;
       }
     }
     return;

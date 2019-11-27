@@ -38,7 +38,8 @@ class KDTree
     Point(const Point& pt);
     const Point& operator = (const Point&);
     Vector pt;
-    int id;  // this can be used to map somewhere
+    int id;
+    void *pnter;
   };
 
   ///Creates a kdtree with the given points, dimension k, and max depth

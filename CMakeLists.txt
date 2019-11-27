@@ -19,3 +19,11 @@ target_link_libraries(kdtest ${LIBS})
 
 add_executable(listtest test_lock.cpp)
 target_link_libraries(listtest pthread)
+
+add_executable(serialrrt serial_rrt.cpp KDTree.cpp)
+
+add_executable(serialrrt_kd serial_rrt_kd.cpp kdtree.c alloc.cpp)
+target_link_libraries(serialrrt_kd pthread)
+
+add_executable(prrt parallel_rrt_kd.cpp kdtree.c alloc.cpp)
+target_link_libraries(prrt pthread)

@@ -9,6 +9,10 @@ Find a reliable package that supports lock-free list manipulation or implement C
 Potential libraries include [https://github.com/khizmax/libcds], [https://github.com/rigtorp/awesome-lockfree]
 But reading source code at [https://github.com/jeffi/prrts-c/blob/master/src/prrts.c] may also be a good idea.
 
+This post seems cool, lock-free is not wait-free [http://concurrencyfreaks.blogspot.com/2014/10/linked-lists-with-wait-free-reads-in-c.html]
+Also a cool github project [https://github.com/pramalhe/ConcurrencyFreaks]
+A cool blog [https://www.memsql.com/blog/common-pitfalls-in-writing-lock-free-algorithms/]
+
 # logs
 On Nov 18, I was able to write code for a thread-safe linked list which will be heavily used in the tree.
 I think I am learning to understand how this atomic and compare_exchange_weak things work.
