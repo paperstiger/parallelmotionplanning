@@ -3,14 +3,15 @@
 #include <iostream>
 #include <memory>
 #include <limits>
+#include <list>
 #include "planner_common.h"
 
 struct TreeNode{
     double* value = nullptr;
     int num_child = 0;  // for debugging purpuse
-    TreeNode* firstChild = nullptr;
-    TreeNode* nextSibling = nullptr;
-    TreeNode* parent = nullptr;
+    TreeNode * volatile firstChild = nullptr;
+    TreeNode * volatile nextSibling = nullptr;
+    TreeNode * volatile parent = nullptr;
     bool rewired = false;  // only allow one node's child being rewired
     double cost_so_far = std::numeric_limits<double>::infinity();
     double cost_to_parent = std::numeric_limits<double>::infinity();
@@ -20,8 +21,12 @@ struct TreeNode{
     void add_child(TreeNode *node, double dist); 
 
     bool remove_child(TreeNode *node);
+
+    void child_traversal(std::list<TreeNode*> &nodes);
     
     void set_cost_recursive(double new_cost);
+
+    void update_cost(double new_cost);
 };
 
 void TreeNode::init(double *val) {
@@ -68,6 +73,17 @@ bool TreeNode::remove_child(TreeNode *node) {
     return true;
 }
 
+void TreeNode::child_traversal(std::list<TreeNode*> &nodes) {
+    rewired = true;
+    __sync_synchronize();
+    TreeNode *to_insert = firstChild;
+    while(to_insert != nullptr) {
+        nodes.push_back(to_insert);
+        to_insert = to_insert->nextSibling;
+    }
+    rewired = false;
+}
+
 // reduce cost for the subtree starting from this node
 void TreeNode::set_cost_recursive(double new_cost) {
     rewired = true;
@@ -82,6 +98,35 @@ void TreeNode::set_cost_recursive(double new_cost) {
     }
     __sync_synchronize();
     rewired = false;
+}
+
+void TreeNode::update_cost(double cost) {
+    cost_so_far = cost;
+    std::list<TreeNode*> nodes_list;
+    nodes_list.push_back(this);
+    child_traversal(nodes_list);
+    nodes_list.push_back(nullptr);
+    auto pit = nodes_list.begin(), nit = next(pit);
+    while(nit != nodes_list.end()) {
+        if(*nit == nullptr) {
+            nit = nodes_list.erase(nit);
+            pit = nodes_list.erase(pit);
+            continue;
+        }
+        // make sure its parent is still pit
+        TreeNode *parent = *pit;
+        TreeNode *cur_node = *nit;
+        if(cur_node->parent == parent) {  // this node is rewired to other nodes
+            cur_node->cost_so_far = parent->cost_so_far + cur_node->cost_to_parent;
+            cur_node->child_traversal(nodes_list);
+            nodes_list.push_back(nullptr);
+            nit++;
+        }
+        else {
+            //std::cout << "parent changed\n";
+            nit = nodes_list.erase(nit);
+        }
+    }
 }
 
 typedef TreeNode RRT_Node;

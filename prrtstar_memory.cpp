@@ -235,7 +235,8 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                         new_node->add_child(cani, cani_dist);
                         // hopefully we can play with cani now
                         double new_cost = cani->cost_so_far;
-                        cani->set_cost_recursive(new_cost);
+                        // cani->set_cost_recursive(new_cost);
+                        cani->update_cost(new_cost);
                     }
                     break;
                 }
