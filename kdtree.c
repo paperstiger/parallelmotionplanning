@@ -12,7 +12,7 @@
 //#include "crc.h"
 
 #define USE_TL_MEMPOOL
-#define MEMPOOL_CHUNKSIZE 65000
+#define MEMPOOL_CHUNKSIZE 650000
 
 #if defined(__STDC__) && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 #define STACK_ALLOC
@@ -93,6 +93,8 @@ kd_create_tree(size_t dimensions, const double *min, const double *max, kd_dist_
         tree->max = max;
         tree->dist_func = dist_func;
         tree->root = root;
+        tree->root->a = NULL;
+        tree->root->b = NULL;
 
 #ifdef USE_TL_MEMPOOL
         if ((error = tl_mempool_init(&tree->mempool, MEMPOOL_CHUNKSIZE)) != 0) {
@@ -113,6 +115,17 @@ kd_create_tree(size_t dimensions, const double *min, const double *max, kd_dist_
         __sync_synchronize();
         
         return tree;
+}
+
+void kd_free(kd_tree_t *tree) {
+        // free mempool
+        tl_free(&tree->mempool, NULL);
+        // free local heap
+        tl_mempool_destroy(&tree->mempool);
+        // free root
+        free(tree->root);
+        // free tree
+        free(tree);
 }
 
 void

@@ -8,6 +8,7 @@ I also want to test if I can manage memory on my own.
 #include <fstream>
 #include <thread>
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
 #include <chrono>
 #include <tuple>
@@ -48,6 +49,10 @@ class RRT;
 // found is a global indicator of exit, does not have to be atomic
 // sample_num is per-thread sampling numbers
 void thread_fun(RRT *problem, int sample_num, int);
+std::condition_variable cv;
+int to_processed;
+std::atomic<int> finished;
+
 
 class RRT{
 public:
@@ -55,10 +60,11 @@ public:
     Vector start, goal;
     kd_tree_t *tree;
     Env *env;
-    RRT_Node *goal_node;
+    RRT_Node *goal_node, *start_node;
     RRTOption *options;
     std::atomic<int> tree_size;
     std::vector<memory_manager*> managers;
+    std::mutex m;
 
     void set_start_goal(const Vector &start_, const Vector &goal_) {
         start = start_;
@@ -73,7 +79,7 @@ public:
     // following Kris convention, this function samples more
     bool plan_more(int num, int thread_num) {
         if(!tree){
-            RRT_Node *start_node = new RRT_Node;
+            start_node = new RRT_Node;
             start_node->value = start.data();
             start_node->cost_so_far = 0;  // I do not modify cost_to_parent since it has no parents
             tree = kd_create_tree(env->dim, env->min.data(), env->max.data(),
@@ -86,6 +92,8 @@ public:
         }
         std::vector<std::thread> threads;
         managers.resize(thread_num);
+        to_processed = thread_num;
+        finished.store(0);
         for(int i = 0; i < thread_num; i++) {
             threads.push_back(std::thread(thread_fun, this, num, i));
         }
@@ -126,7 +134,10 @@ public:
     }
 
     ~RRT() {
-        delete tree;
+        kd_free(tree);
+        delete options;
+        delete start_node;
+        delete goal_node;
         for(auto &mem : managers)
             delete mem;
     }
@@ -175,7 +186,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
             // create node and return, no rewiring is needed
             std::tie(cmndata, cmnnode) = memory.get_data_node();
             std::memcpy(cmndata, x, DIM * sizeof(double));
-            cmnnode->value = cmndata;
+            cmnnode->init(cmndata);
             RRT_Node *new_node = cmnnode;
             near_node->add_child(new_node, radius);
             // no need to update best path unless new_node is close to goal, we only have to check goal
@@ -196,7 +207,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                 if(problem->env->is_free(x, cand->value)) {  //  collision free, can add node
                     std::tie(cmndata, cmnnode) = memory.get_data_node();
                     std::memcpy(cmndata, x, DIM * sizeof(double));
-                    cmnnode->value = cmndata;
+                    cmnnode->init(cmndata);
                     RRT_Node *new_node = cmnnode;
                     cand->add_child(new_node, it->second);
                     problem->update_goal_parent(new_node, goal_radius);
@@ -232,6 +243,14 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
         }
     }
     delete[] x;
+    finished.fetch_add(1);
+    std::cout << "freeing\n";
+    std::unique_lock<std::mutex> lk(problem->m);
+    cv.wait(lk, []{return to_processed == finished;});
+    tl_free(&problem->tree->mempool, NULL);
+    std::cout << "free finish\n";
+    lk.unlock();
+    cv.notify_one();
 }
 
 // a naive environment simply from (0, 0) to (1, 1), no obstacle

@@ -30,6 +30,7 @@ typedef struct kd_tree {
 kd_tree_t *kd_create_tree(size_t dimensions, const double *min, const double *max,
                           kd_dist_func dist_func,
                           const double *root_config, void *root_value);
+void kd_free(kd_tree_t *tree);
 void kd_insert(kd_tree_t *t, const double *config, void *value);
 void *kd_nearest(kd_tree_t *t, const double *target, double *dist);
 int kd_near(kd_tree_t *t, const double *target, double radius, kd_near_callback callback, void *cb_data);

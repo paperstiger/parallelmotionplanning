@@ -8,12 +8,14 @@
 struct TreeNode{
     double* value = nullptr;
     int num_child = 0;  // for debugging purpuse
-    TreeNode* volatile firstChild = nullptr;
-    TreeNode* volatile nextSibling = nullptr;
+    TreeNode* firstChild = nullptr;
+    TreeNode* nextSibling = nullptr;
     TreeNode* parent = nullptr;
     bool rewired = false;  // only allow one node's child being rewired
     double cost_so_far = std::numeric_limits<double>::infinity();
     double cost_to_parent = std::numeric_limits<double>::infinity();
+
+    void init(double *val);
 
     void add_child(TreeNode *node, double dist); 
 
@@ -22,8 +24,19 @@ struct TreeNode{
     void set_cost_recursive(double new_cost);
 };
 
+void TreeNode::init(double *val) {
+    value = val;
+    num_child = 0;
+    firstChild = nullptr;
+    nextSibling = nullptr;
+    parent = nullptr;
+    rewired = false;  // only allow one node's child being rewired
+    cost_so_far = std::numeric_limits<double>::infinity();
+    cost_to_parent = std::numeric_limits<double>::infinity();
+}
+
 void TreeNode::add_child(TreeNode *node, double dist){
-    TreeNode *first;
+    TreeNode *first = nullptr;
     do {
         first = firstChild;
         node->nextSibling = first;
@@ -57,7 +70,7 @@ bool TreeNode::remove_child(TreeNode *node) {
 void TreeNode::set_cost_recursive(double new_cost) {
     cost_so_far = new_cost;
     TreeNode *child = firstChild;
-    while(child) {
+    while(child != nullptr) {
         double cost = cost_so_far + child->cost_to_parent;
         child->set_cost_recursive(cost);
         child = child->nextSibling;

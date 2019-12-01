@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <thread>
+#include <iostream>
 #include "alloc.h"
 
 typedef struct pool_bucket {
@@ -73,9 +74,11 @@ tl_alloc(tl_mempool_t *pool, size_t size)
         bucket = (pool_bucket_t*)pthread_getspecific(pool->key);
 
         if (bucket == NULL || bucket->offset + size > pool->chunk_size) {
+                //std::cout << "enter once\n";
                 tmp = bucket;
                 if ((bucket = (pool_bucket_t*)malloc(sizeof(pool_bucket_t) + pool->chunk_size)) == NULL)
                         return NULL;
+                //std::cout << "alloc " << std::this_thread::get_id() << " key " << pool->key << bucket << "\n";
                 
                 bucket->prev = tmp;
                 bucket->offset = aligned_offset(bucket->data, CACHE_LINE_SIZE/2);
@@ -92,6 +95,15 @@ tl_alloc(tl_mempool_t *pool, size_t size)
 void
 tl_free(tl_mempool_t *pool, void *ptr)
 {
+        pool_bucket_t* bucket = (pool_bucket_t*)pthread_getspecific(pool->key);
+        //std::cout << "free " << std::this_thread::get_id() << " key " << pool->key << " bucket " << bucket << "\n";
+        pool_bucket_t* prev;
+        while(bucket != nullptr) {
+                //std::cout << "free one\n";
+                prev = bucket->prev;
+                free(bucket);
+                bucket = prev;
+        }
 }
 
 void *
