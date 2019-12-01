@@ -1,6 +1,6 @@
 /*
-Write parallel version of RRT star, just make everything work.
-We have to create threads on our own and maintain the RRT tree when multiple threads are adding children
+I do not know what is going on, but is memory allocation takes too long?
+I also want to test if I can manage memory on my own.
 */
 #include <vector>
 #include <list>
@@ -13,28 +13,14 @@ We have to create threads on our own and maintain the RRT tree when multiple thr
 #include <tuple>
 #include <limits>
 #include <algorithm>
+#include <cstring>
 #include "stdlib.h"
 #include "kdtree.h"
 #include "arrayutils.h"
 
-typedef std::vector<double> Vector;
+#include "planner_common.h"
+#include "tree_node.h"
 
-// a base class for collision checker, it should be implemented by an environment
-class CollisionChecker{
-public:
-    virtual bool is_free(const Vector &v1, const Vector &v2) = 0;
-};
-
-// a base class for an environment, it has to have to implement some functions
-class Env : public CollisionChecker{
-public:
-    virtual Vector sample() = 0;
-
-    Env(size_t dim_) : dim(dim_) {} 
-
-    size_t dim;
-    Vector min, max;
-};
 
 extern "C" double MyDistFun(const double *a, const double *b)
 {
@@ -46,6 +32,7 @@ extern "C" double MyDistFun(const double *a, const double *b)
 
 typedef std::pair<void*, double> pvd;
 typedef std::list<pvd> list_pnter_dist;
+
 // data is the writing location, value is the stored value for each kd node
 void kd_near_call_back(void *data, int no, void *value, double dist) {
     list_pnter_dist *lst = (list_pnter_dist*)data;
@@ -55,68 +42,6 @@ void kd_near_call_back(void *data, int no, void *value, double dist) {
 }
 
 // this class maintains some cool stuff
-template<class T>
-class TreeNode{
-public:
-    T value;
-    int num_child = 0;  // for debugging purpuse
-    std::atomic<TreeNode*> firstChild, nextSibling;
-    TreeNode *parent = nullptr;
-    std::atomic<bool> rewired;  // only allow one node's child being rewired
-    double cost_so_far = std::numeric_limits<double>::infinity();
-    double cost_to_parent = std::numeric_limits<double>::infinity();
-    TreeNode(const T &val) : value(val)
-                             {rewired = false;
-                             firstChild = nullptr;
-                             nextSibling = nullptr;}
-    void add_child(TreeNode<T> *node, double dist) {
-        TreeNode *first;
-        do {
-            first = firstChild.load(std::memory_order_relaxed);
-            node->nextSibling = first;
-        }while(!firstChild.compare_exchange_weak(first, node, std::memory_order_release, std::memory_order_relaxed));
-        node->parent = this;
-        node->cost_to_parent = dist;
-        node->cost_so_far = cost_so_far + dist;
-        num_child += 1;
-    }
-
-    bool remove_child(TreeNode<T> *node) {
-        TreeNode *test = firstChild.load(std::memory_order_relaxed);
-        if(test == node) {
-            firstChild.store(test->nextSibling);  // maybe null and it is fine
-            return true;
-        }
-        TreeNode *prev_node;
-        while(test != node) {
-            if(test == nullptr){
-                std::cout << "cannot find node\n";
-                return false;  // data may be corrupted, cannot find node within children lists
-            }
-            prev_node = test;
-            test = test->nextSibling;
-        }
-        prev_node->nextSibling.store(test->nextSibling);  // this effectively removes node
-        return true;
-    }
-
-    // reduce cost for the subtree starting from this node
-    void set_cost_recursive(double new_cost) {
-        cost_so_far = new_cost;
-        TreeNode *child = firstChild.load();
-        while(child) {
-            double cost = cost_so_far + child->cost_to_parent;
-            child->set_cost_recursive(cost);
-            child = child->nextSibling.load();
-        }
-    }
-};
-
-typedef TreeNode<Vector> RRT_Node;
-
-struct RRTOption {
-    double gamma = 1;
-};
 class RRT;
 // write subroutine for each thread
 // problem is a pointer to the RRT instance
@@ -133,6 +58,7 @@ public:
     RRT_Node *goal_node;
     RRTOption *options;
     std::atomic<int> tree_size;
+    std::vector<memory_manager*> managers;
 
     void set_start_goal(const Vector &start_, const Vector &goal_) {
         start = start_;
@@ -147,16 +73,19 @@ public:
     // following Kris convention, this function samples more
     bool plan_more(int num, int thread_num) {
         if(!tree){
-            RRT_Node *start_node = new RRT_Node(start);
+            RRT_Node *start_node = new RRT_Node;
+            start_node->value = start.data();
             start_node->cost_so_far = 0;  // I do not modify cost_to_parent since it has no parents
             tree = kd_create_tree(env->dim, env->min.data(), env->max.data(),
                         MyDistFun,
                         start.data(), start_node);
-            goal_node = new RRT_Node(goal);  // goal node is created but not in in kd_tree
+            goal_node = new RRT_Node;  // goal node is created but not in in kd_tree
+            goal_node->value = goal.data();
             // kd_insert(tree, goal_node->value.data(), goal_node);  // RRT star has to start with two nodes
             tree_size.store(1, std::memory_order_relaxed);
         }
         std::vector<std::thread> threads;
+        managers.resize(thread_num);
         for(int i = 0; i < thread_num; i++) {
             threads.push_back(std::thread(thread_fun, this, num, i));
         }
@@ -166,8 +95,8 @@ public:
     }
 
     void update_goal_parent(RRT_Node *node, double radius) {
-        double dist = MyDistFun(node->value.data(), goal.data());
-        if((dist > radius) || (!env->is_free(node->value, goal)))
+        double dist = MyDistFun(node->value, goal.data());
+        if((dist > radius) || (!env->is_free(node->value, goal.data())))
             return;
         if(node->cost_so_far + dist < goal_node->cost_so_far) {
             if(goal_node->parent)
@@ -184,7 +113,7 @@ public:
         std::list<Vector> list_q;
         auto node = goal_node;
         while(node) {
-            list_q.push_front(node->value);
+            list_q.push_front(Vector(node->value, node->value + env->dim));
             node = node->parent;
         }
         for(auto iter=list_q.begin(); iter != list_q.end(); iter++)
@@ -198,12 +127,13 @@ public:
 
     ~RRT() {
         delete tree;
+        for(auto &mem : managers)
+            delete mem;
     }
 
-    void _extend_within(Vector &x, const Vector &base, double factor) const {
-        const Vector &pnt = base;
-        for(size_t i = 0; i < x.size(); i++) {
-            x[i] = pnt[i] + factor * (x[i] - pnt[i]);
+    void _extend_within(double *x, const double *base, double factor) const {
+        for(size_t i = 0; i < env->dim; i++) {
+            x[i] = base[i] + factor * (x[i] - base[i]);
         }
     }
 };
@@ -211,11 +141,17 @@ public:
 void thread_fun(RRT *problem, int sample_num, int thread_id)
 {
     //std::cout << "Entering thread " << std::this_thread::get_id() << std::endl;
+    memory_manager *mem_pnter = new memory_manager(sample_num, problem->env->dim);
+    problem->managers[thread_id] = mem_pnter;
+    auto &memory = *mem_pnter;
     list_pnter_dist lst_pnt_dis;
     double goal_radius = 0.1;
+    double *cmndata;
+    RRT_Node *cmnnode;
+    double *x = new double[problem->env->dim];
+    int DIM = problem->env->dim;
     for(int i = 0; i < sample_num; i++) {
-        //std::cout << " i = " << i << std::endl;
-        Vector x = problem->env->sample();
+        problem->env->sample(x);
         // find closest point
         double dist = 0;
         int step_no = problem->tree_size.load();
@@ -224,24 +160,27 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                     1.0 / (double)problem->env->dim);
         //std::cout << "radius = " << radius << "\n";
         lst_pnt_dis.clear();
-        int near_list_size = kd_near(problem->tree, x.data(), radius, kd_near_call_back, &lst_pnt_dis);
+        int near_list_size = kd_near(problem->tree, x, radius, kd_near_call_back, &lst_pnt_dis);
         // in two conditions, we switch to nearest neighbor search
         // 1. no node found in the vinicity
         // 2. one node is found but is the goal node; the goal node shall not have any children
         if((near_list_size == 0)) {
             double nearest_dist = 0;
-            RRT_Node *near_node = (RRT_Node*)kd_nearest(problem->tree, x.data(), &nearest_dist);
+            RRT_Node *near_node = (RRT_Node*)kd_nearest(problem->tree, x, &nearest_dist);
             // extend x so that its distance is exact radius
             problem->_extend_within(x, near_node->value, radius / nearest_dist);
             // check collision
             if(!problem->env->is_free(x, near_node->value))  // sample is infeasible from near_node
                 continue;
             // create node and return, no rewiring is needed
-            RRT_Node *new_node = new RRT_Node(x);
+            std::tie(cmndata, cmnnode) = memory.get_data_node();
+            std::memcpy(cmndata, x, DIM * sizeof(double));
+            cmnnode->value = cmndata;
+            RRT_Node *new_node = cmnnode;
             near_node->add_child(new_node, radius);
             // no need to update best path unless new_node is close to goal, we only have to check goal
             // TODO: it may be useful to check if new_node is close to target...
-            kd_insert(problem->tree, new_node->value.data(), new_node);
+            kd_insert(problem->tree, new_node->value, new_node);
             problem->tree_size.fetch_add(1, std::memory_order_relaxed);
             // check if goal can be routed here
             problem->update_goal_parent(new_node, goal_radius);
@@ -255,10 +194,13 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                 if(cand == problem->goal_node)  // this is the goal node, we rewire based on if its has parent
                     continue;
                 if(problem->env->is_free(x, cand->value)) {  //  collision free, can add node
-                    RRT_Node *new_node = new RRT_Node(x);
+                    std::tie(cmndata, cmnnode) = memory.get_data_node();
+                    std::memcpy(cmndata, x, DIM * sizeof(double));
+                    cmnnode->value = cmndata;
+                    RRT_Node *new_node = cmnnode;
                     cand->add_child(new_node, it->second);
                     problem->update_goal_parent(new_node, goal_radius);
-                    kd_insert(problem->tree, new_node->value.data(), new_node);
+                    kd_insert(problem->tree, new_node->value, new_node);
                     // try to rewire
                     for (auto rit=lst_pnt_dis.rbegin(); rit != lst_pnt_dis.rend(); rit++) {
                         RRT_Node *cani = (RRT_Node*)(rit->first);
@@ -289,6 +231,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
             }
         }
     }
+    delete[] x;
 }
 
 // a naive environment simply from (0, 0) to (1, 1), no obstacle
@@ -299,7 +242,7 @@ public:
         max = {1, 1};
     }
 
-    bool is_free(const Vector &v1, const Vector &v2) {
+    bool is_free(const double *v1, const double *v2) {
         double x1 = v1[0], x2 = v2[0], y1 = v1[1], y2 = v2[1];
         if((x1 - 0.5) * (x2 - 0.5) >= 0)
             return true;
@@ -310,22 +253,25 @@ public:
         }
     }
 
-    Vector sample() {
-        Vector p(dim);
+    void sample(double *x) {
+        double *p = x;
         for(int i = 0; i < dim; i++) {
             p[i] = ((double)rand() / RAND_MAX * (max[i] - min[i]) + min[i]);
         }
-        return p;
     }
 };
 
 int main(int argc, char *argv[]) {
     int thread_num = 1;
+    int sample_num = 10000;
     if(argc > 1) {
         thread_num = std::atoi(argv[1]);
+        if(argc > 2) {
+            sample_num = std::atoi(argv[2]);
+        }
     }
     std::cout << "Running with " << thread_num << " threads\n";
-    srand(time(0));
+    srand(0);
     NaiveEnv env;
     RRT rrt(&env);
     rrt.options->gamma = 0.2;
@@ -335,7 +281,7 @@ int main(int argc, char *argv[]) {
     auto tnow = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < 1; i++) {
         std::cout << "i = " << i << std::endl;
-        if(rrt.plan_more(10000 / thread_num, thread_num))
+        if(rrt.plan_more(sample_num / thread_num, thread_num))
             break;
     }
     auto tf = std::chrono::high_resolution_clock::now();
@@ -351,13 +297,5 @@ int main(int argc, char *argv[]) {
     }
     myfile.close();
     std::cout << "path size " << path.size() << " length " << rrt.get_path_length() << std::endl;
-    // int stone = 0;
-    // for(auto &p : path) {
-    //     std::cout << stone << " ";
-    //     for(auto &n : p)
-    //         std::cout << n << " ";
-    //     std::cout << "\n";
-    //     stone++;
-    // }
     return 0;
 }

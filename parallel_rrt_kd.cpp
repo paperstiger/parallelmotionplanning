@@ -91,6 +91,7 @@ public:
     kd_tree_t *tree;
     Env *env;
     RRT_Node *_goal_node;
+    double _goal_length;
     std::mutex _mutex;
 
     void set_start_goal(const Vector &start_, const Vector &goal_) {
@@ -123,6 +124,7 @@ public:
     // return the path
     std::vector<Vector> get_path() {
         std::vector<Vector> path;
+        _goal_length = 0;
         if(!_goal_node)
             return path;
         std::list<Vector> list_q;
@@ -134,6 +136,10 @@ public:
         for(auto iter=list_q.begin(); iter != list_q.end(); iter++)
             path.push_back(*iter);
         return path;
+    }
+
+    double get_path_length() const {
+        return _goal_length;
     }
 
     ~RRT() {
@@ -235,7 +241,7 @@ int main(int argc, char *argv[]) {
     std::cout << "Time taken by function: "
          << duration.count() << " microseconds" << std::endl;
     auto path = rrt.get_path();
-    std::cout << "path length " << path.size() << std::endl;
+    std::cout << "path length " << path.size() << "path length " << rrt.get_path_length() << std::endl;
     // int stone = 0;
     // for(auto &p : path) {
     //     std::cout << stone << " ";

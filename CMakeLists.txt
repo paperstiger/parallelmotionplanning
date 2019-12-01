@@ -27,3 +27,9 @@ target_link_libraries(serialrrt_kd pthread)
 
 add_executable(prrt parallel_rrt_kd.cpp kdtree.c alloc.cpp)
 target_link_libraries(prrt pthread)
+
+add_executable(prrts_nomem parallel_rrtstar_kd.cpp kdtree.c alloc.cpp)
+target_link_libraries(prrts_nomem pthread)
+
+add_executable(prrts prrtstar_memory.cpp kdtree.c alloc.cpp tree_node.h planner_common.h)
+target_link_libraries(prrts pthread)
