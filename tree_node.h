@@ -48,6 +48,8 @@ void TreeNode::add_child(TreeNode *node, double dist){
 }
 
 bool TreeNode::remove_child(TreeNode *node) {
+    while(rewired)
+        std::this_thread::yield();
     TreeNode *test = firstChild;
     if(test == node) {
         firstChild = test->nextSibling;  // maybe null and it is fine
@@ -68,13 +70,18 @@ bool TreeNode::remove_child(TreeNode *node) {
 
 // reduce cost for the subtree starting from this node
 void TreeNode::set_cost_recursive(double new_cost) {
+    rewired = true;
+    __sync_synchronize();
     cost_so_far = new_cost;
     TreeNode *child = firstChild;
     while(child != nullptr) {
         double cost = cost_so_far + child->cost_to_parent;
-        child->set_cost_recursive(cost);
+        if(child->parent == this)
+            child->set_cost_recursive(cost);
         child = child->nextSibling;
     }
+    __sync_synchronize();
+    rewired = false;
 }
 
 typedef TreeNode RRT_Node;

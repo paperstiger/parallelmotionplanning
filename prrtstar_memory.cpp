@@ -244,11 +244,9 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
     }
     delete[] x;
     finished.fetch_add(1);
-    std::cout << "freeing\n";
     std::unique_lock<std::mutex> lk(problem->m);
     cv.wait(lk, []{return to_processed == finished;});
     tl_free(&problem->tree->mempool, NULL);
-    std::cout << "free finish\n";
     lk.unlock();
     cv.notify_one();
 }
