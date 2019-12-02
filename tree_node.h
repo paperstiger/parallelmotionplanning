@@ -55,25 +55,33 @@ void TreeNode::add_child(TreeNode *node, double dist){
 bool TreeNode::remove_child(TreeNode *node) {
     while(rewired)
         std::this_thread::yield();
+    __sync_synchronize();
+    rewired = true;
     TreeNode *test = firstChild;
     if(test == node) {
         firstChild = test->nextSibling;  // maybe null and it is fine
+        rewired = false;
         return true;
     }
     TreeNode *prev_node;
     while(test != node) {
         if(test == nullptr){
             std::cout << "cannot find node\n";
+            rewired = false;
             return false;  // data may be corrupted, cannot find node within children lists
         }
         prev_node = test;
         test = test->nextSibling;
     }
     prev_node->nextSibling = test->nextSibling;  // this effectively removes node
+    __sync_synchronize();
+    rewired = false;
     return true;
 }
 
 void TreeNode::child_traversal(std::list<TreeNode*> &nodes) {
+    while(rewired)
+        std::this_thread::yield();
     rewired = true;
     __sync_synchronize();
     TreeNode *to_insert = firstChild;

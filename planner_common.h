@@ -12,7 +12,7 @@ public:
 // a base class for an environment, it has to have to implement some functions
 class Env : public CollisionChecker{
 public:
-    virtual void sample(double *x) = 0;
+    virtual void sample(double *x, int id=-1, int num=-1) = 0;
 
     Env(size_t dim_) : dim(dim_) {
     } 

@@ -23,7 +23,7 @@ I also want to test if I can manage memory on my own.
 #include "tree_node.h"
 
 
-extern "C" double MyDistFun(const double *a, const double *b)
+double MyDistFun(const double *a, const double *b)
 {
     double dist = 0;
     for(int i = 0; i < 2; i++)
@@ -154,6 +154,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
     //std::cout << "Entering thread " << std::this_thread::get_id() << std::endl;
     memory_manager *mem_pnter = new memory_manager(sample_num, problem->env->dim);
     problem->managers[thread_id] = mem_pnter;
+    int thread_num = problem->managers.size();
     auto &memory = *mem_pnter;
     list_pnter_dist lst_pnt_dis;
     double goal_radius = 0.1;
@@ -162,7 +163,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
     double *x = new double[problem->env->dim];
     int DIM = problem->env->dim;
     for(int i = 0; i < sample_num; i++) {
-        problem->env->sample(x);
+        problem->env->sample(x, thread_id, thread_num);
         // find closest point
         double dist = 0;
         int step_no = problem->tree_size.load();
@@ -198,7 +199,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
         }
         else{  // link new node to the nearest one and perform rewiring based on that
             // first find the closest node to connect into
-            lst_pnt_dis.sort([](const pvd &n1, const pvd &n2) {return n1.second < n2.second;});
+            //lst_pnt_dis.sort([](const pvd &n1, const pvd &n2) {return n1.second < n2.second;});
             //std::cout << "rewire " << lst_pnt_dis.size() << " nodes\n";
             for(auto it = lst_pnt_dis.begin(); it != lst_pnt_dis.end(); it++) {
                 RRT_Node *cand = (RRT_Node*)(it->first);
@@ -271,10 +272,16 @@ public:
         }
     }
 
-    void sample(double *x) {
-        double *p = x;
-        for(int i = 0; i < dim; i++) {
-            p[i] = ((double)rand() / RAND_MAX * (max[i] - min[i]) + min[i]);
+    void sample(double *x, int id, int num) {
+        if(num <= 1) {  // num if not greater than 1
+            double *p = x;
+            for(int i = 0; i < dim; i++) {
+                p[i] = ((double)rand() / RAND_MAX * (max[i] - min[i]) + min[i]);
+            }
+        }
+        else{
+            x[0] = (id + (double)rand() / RAND_MAX) / num * (max[0] - min[0]) + min[0];
+            x[1] = ((double)rand() / RAND_MAX * (max[1] - min[1]) + min[1]);
         }
     }
 };
