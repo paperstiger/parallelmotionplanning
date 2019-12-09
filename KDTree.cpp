@@ -16,7 +16,7 @@ Real Distance(const Vector& a, const Vector& b, Real norm) {
     double result = 0;
     if(norm == 1) {
         for(size_t i = 0; i < a.size(); i++)
-            result += abs(a[i] - b[i]);
+            result += fabs(a[i] - b[i]);
         return result;
     }
     for(size_t i = 0; i < a.size(); i++)
@@ -28,7 +28,7 @@ Real Distance_Weighted(const Vector& a,const Vector& b,Real norm,const Vector& w
     double result = 0;
     if(norm == 1) {
         for(size_t i = 0; i < a.size(); i++)
-            result += abs(a[i] - b[i]) * weights[i];
+            result += fabs(a[i] - b[i]) * weights[i];
         return result;
     }
     for(size_t i = 0; i < a.size(); i++)

@@ -11,11 +11,7 @@ find_package(Eigen3 REQUIRED)
 
 include_directories(${EIGEN3_INCLUDE_DIR})
 
-
-set(LIBS "mpi_cxx")
-
-add_executable(kdtest kd_tree_test.cpp KDTree.cpp)
-target_link_libraries(kdtest ${LIBS})
+set(KD_FILE kdtree.h kdtree.c alloc.cpp alloc.h)
 
 add_executable(listtest test_lock.cpp)
 target_link_libraries(listtest pthread)
@@ -33,3 +29,6 @@ target_link_libraries(prrts_nomem pthread)
 
 add_executable(prrts prrtstar_memory.cpp kdtree.c kdtree.h alloc.cpp alloc.h tree_node.h planner_common.h)
 target_link_libraries(prrts pthread)
+
+add_executable(kinorrt kino_rrt_entry.cpp kino_rrt_test_pen.cpp kino_rrt_test_acrobot.cpp kino_tree_helper.h kino_tree_helper.cpp ${KD_FILE})
+target_link_libraries(kinorrt pthread)

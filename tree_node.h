@@ -8,7 +8,7 @@
 
 struct TreeNode{
     double* value = nullptr;
-    int num_child = 0;  // for debugging purpuse
+    int num_child = 0;  // for debugging purpose
     TreeNode * volatile firstChild = nullptr;
     TreeNode * volatile nextSibling = nullptr;
     TreeNode * volatile parent = nullptr;
