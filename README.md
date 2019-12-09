@@ -18,3 +18,6 @@ On Nov 18, I was able to write code for a thread-safe linked list which will be 
 I think I am learning to understand how this atomic and compare_exchange_weak things work.
 I also made a serial KD-Tree work by modifying Kris' code.
 Parallel version is being worked on.
+
+On Dec 9, I already made a prrtstar work on some simple problems. However, the speedup is not as satisfactory as expected.
+I shifted my focus a little bit on ao-rrt and made a basic version work.
