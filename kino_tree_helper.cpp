@@ -12,6 +12,7 @@ void Node::add_child(Node *node, double cost) {
         child = node;
     }
     child->reward_so_far = reward_so_far + cost;
+    child->parent = this;
 }
 
 // this section is devoted to random section
@@ -122,15 +123,26 @@ std::tuple<bool, Vd, double> DynSystem::integrate(RefcVd x0, RefcVd ctrl, double
     Vd xf = x0;
     double leftt = time;
     double edge_cost = 0;
-    while(leftt > 0) {
-        double intt = std::min(dt, leftt);
-        Vd deriv = derivative(xf, ctrl);
-        double cost_deriv = cost_derivative(xf, ctrl);
-        xf += deriv * intt;
-        edge_cost += cost_deriv * intt;
-        if(!state->valid(xf))
-            return std::make_tuple(false, xf, edge_cost);
-        leftt -= dt;
+    if(discrete_dt <= 0) {  // continuous time case
+        while(leftt > 0) {
+            double intt = std::min(dt, leftt);
+            Vd deriv = derivative(xf, ctrl);
+            double cost_deriv = cost_derivative(xf, ctrl);
+            xf += deriv * intt;
+            edge_cost += cost_deriv * intt;
+            if(!state->valid(xf))
+                return std::make_tuple(false, xf, edge_cost);
+            leftt -= dt;
+        }
+    }
+    else {
+        int num_step = (int)round(time / discrete_dt);
+        for(int i = 0; i < num_step; i++) {
+            edge_cost += cost_derivative(xf, ctrl);
+            xf = derivative(xf, ctrl);
+            if(!state->valid(xf))
+                return std::make_tuple(false, xf, edge_cost);
+        }
     }
     return std::make_tuple(true, xf, edge_cost);
 }
@@ -227,6 +239,7 @@ int RRT::plan_more(int num) {
         std::memcpy(cmnx, new_state.data(), dimx * sizeof(double));
         std::memcpy(cmnu, ctrl.data(), dimu * sizeof(double));
         cmnnode->state = cmnx;
+        cmnnode->ctrl = cmnu;
         cmnnode->dt = node_dt;
         near_node->add_child(cmnnode, edge_cost);
         // insert this state into the tree
@@ -237,17 +250,34 @@ int RRT::plan_more(int num) {
         //     max_reward_node = cmnnode;
         // }
         // return if we found the new child is in goal
-        //std::cout << new_state(0) << " " << new_state(1) << " " << new_state(2) << "\n";
+        if(this->debug_print)
+            std::cout << new_state.transpose() << "\n";
         if(sys->state->goal_space->valid(new_state)) {
             goal_node = cmnnode;
+            std::cout << "goal found in step " << i + 1 << std::endl;
             return i;
         }
     }
     return -1;
 }
 
+// return the path
+std::list<Node*> RRT::get_path() const {
+    std::list<Node*> result;
+    Node *node = this->goal_node;
+    while(node) {
+        result.push_front(node);
+        node = node->parent;
+    }
+    return result;
+}
+
 bool RRT::heuristic_sample(RefcVd x0, RefVd ctrl, RefVd new_state, double &nodedt, double &edge_cost, RefcVd goal) {
     nodedt = inte_max_dt * pow(rand_zero_one(), 1.0 / sys->ctrl->dimu);
+    if(sys->is_discrete()) {
+        nodedt = sys->discrete_dt * round(nodedt / sys->discrete_dt);
+        nodedt = std::max(nodedt, sys->discrete_dt);
+    }
     edge_cost = 0;
     if((!heuristic) || (rand_zero_one() < sample_rand_action_prob)) {
         ctrl = sys->ctrl->sample();

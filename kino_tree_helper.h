@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <random>
 #include <tuple>
+#include <list>
 #include "eigentypedef.h"
 #include "kdtree.h"
 
@@ -136,27 +137,28 @@ public:
 // this class defines a dynamic system, some function has to be overloaded
 class DynSystem{
 public:
-    DynSystem() : state(nullptr), ctrl(nullptr) {}
+    DynSystem() : state(nullptr), ctrl(nullptr), discrete_dt(0) {}
 
     DynSystem(StateSpace *state_, ControlSpace *ctrl_) : state(state_), ctrl(ctrl_) {}
 
-    virtual Vd derivative(RefcVd state, RefcVd ctrl) = 0;  // return the derivative
+    virtual Vd derivative(RefcVd state, RefcVd ctrl) = 0;  // return the derivative if is continuous, otherwise return next_state
 
-    // virtual double get_cost(RefcVd x0, RefcVd xf, RefcVd ctrl, double dt);  // return cost function
-
-    virtual double cost_derivative(RefcVd x0, RefcVd ctrl) = 0;
+    virtual double cost_derivative(RefcVd x0, RefcVd ctrl) = 0;  // return derivative if continuous, otherwise return cost at this step
 
     virtual ~DynSystem() {};
 
     std::tuple<bool, Vd, double> integrate(RefcVd x0, RefcVd ctrl, double time, double dt=-1);  // integrate
 
-    int dimx() {return state->dimx;}
+    int dimx() const {return state->dimx;}
 
-    int dimu() {return ctrl->dimu;}
+    int dimu() const {return ctrl->dimu;}
+
+    bool is_discrete() const {return discrete_dt > 0;}
 
 public:
     StateSpace *state;
     ControlSpace *ctrl;
+    double discrete_dt;  // determine if the system is actually discrete
 };
 
 // this class defines an extended dynamic system that includes the cost dimension
@@ -287,6 +289,7 @@ public:
     int ctrl_sample_num = 3;  // this is used with heuristic
     bool heuristic_use_goal = false;
     bool last_dim_cost_hack = false;
+    bool debug_print = false;
     kd_tree_t *tree;
     memory_manager *manager;
     double sample_goal_prob = 0.1;
@@ -308,6 +311,8 @@ public:
     bool heuristic_sample(RefcVd x0, RefVd ctrl, RefVd new_state, double &nodedt, double &edge_cost, RefcVd goal);
 
     int plan_more(int num);
+
+    std::list<Node*> get_path() const;
     
     ~RRT() {
         kd_free(tree);
