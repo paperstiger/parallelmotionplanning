@@ -1,1 +1,0 @@
-/usr/bin/c++      CMakeFiles/serialrrt_kd.dir/serial_rrt_kd.cpp.o CMakeFiles/serialrrt_kd.dir/kdtree.c.o CMakeFiles/serialrrt_kd.dir/alloc.cpp.o  -o bin/serialrrt_kd -rdynamic -lpthread 
