@@ -51,6 +51,8 @@ class RRT;
 // found is a global indicator of exit, does not have to be atomic
 // sample_num is per-thread sampling numbers
 void thread_fun(RRT *problem, int sample_num, int);
+bool check_node_correctness(RRT_Node *node);
+bool check_tree_correctness(RRT_Node *start_node);
 std::condition_variable cv;
 int to_processed;
 std::atomic<int> finished;
@@ -250,6 +252,14 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
     finished.fetch_add(1);
     std::unique_lock<std::mutex> lk(problem->m);
     cv.wait(lk, []{return to_processed == finished;});
+    if(thread_id == 0){
+        if (check_tree_correctness(problem->start_node)){
+            std::cout << "Tree Valid " << std::endl;
+        }
+        else{
+            std::cout << "Tree InValid " << std::endl;
+        }
+    }
     tl_free(&problem->tree->mempool, NULL);
     lk.unlock();
     cv.notify_one();
@@ -287,7 +297,6 @@ public:
         }
     }
 };
-bool check_node_correctness(RRT_Node *node);
 bool check_tree_correctness(RRT_Node *start_node){
     RRT_Node *child_node = start_node->firstChild;
     while(child_node != nullptr){
@@ -375,13 +384,5 @@ int main(int argc, char *argv[]) {
     }
     myfile.close();
     std::cout << "path size " << path.size() << " length " << rrt.get_path_length() << std::endl;
-
-    if (check_tree_correctness(rrt.start_node)){
-        std::cout << "Tree Valid " << std::endl;
-    }
-    else{
-        std::cout << "Tree InValid " << std::endl;
-    }
-
     return 0;
 }
