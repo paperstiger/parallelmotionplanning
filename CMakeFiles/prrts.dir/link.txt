@@ -1,0 +1,1 @@
+/usr/bin/c++      CMakeFiles/prrts.dir/prrtstar_memory.cpp.o CMakeFiles/prrts.dir/kdtree.c.o CMakeFiles/prrts.dir/alloc.cpp.o  -o bin/prrts -rdynamic -lpthread 

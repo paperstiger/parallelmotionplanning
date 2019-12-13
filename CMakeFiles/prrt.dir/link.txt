@@ -1,0 +1,1 @@
+/usr/bin/c++      CMakeFiles/prrt.dir/parallel_rrt_kd.cpp.o CMakeFiles/prrt.dir/kdtree.c.o CMakeFiles/prrt.dir/alloc.cpp.o  -o bin/prrt -rdynamic -lpthread 

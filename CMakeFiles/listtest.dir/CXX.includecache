@@ -1,0 +1,20 @@
+#IncludeRegexLine: ^[ 	]*#[ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/motion/parallelmotionplanning/test_lock.cpp
+iostream
+-
+thread
+-
+vector
+-
+atomic
+-
+stdio.h
+-
+

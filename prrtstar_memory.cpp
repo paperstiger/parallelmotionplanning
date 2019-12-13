@@ -22,7 +22,9 @@ I also want to test if I can manage memory on my own.
 #include "planner_common.h"
 #include "tree_node.h"
 
-
+//
+#include <math.h>
+//
 double MyDistFun(const double *a, const double *b)
 {
     double dist = 0;
@@ -285,6 +287,57 @@ public:
         }
     }
 };
+bool check_node_correctness(RRT_Node *node);
+bool check_tree_correctness(RRT_Node *start_node){
+    RRT_Node *child_node = start_node->firstChild;
+    while(child_node != nullptr){
+        if(!check_node_correctness(child_node)){
+            return false;
+        }
+        child_node = child_node->nextSibling;
+    }
+    return true;
+}
+
+bool check_node_correctness(RRT_Node *node){
+    //auto start_node = problem->start_node;
+    //std::cout <<  "test start node:" << start_node->cost_so_far << std::endl;
+    double epsilon = 0.000001;
+    // checking 1) if the cost_so_far equals the cost_so_far from parent + cost_to_parent
+    // 2) if parent's child's parent is still itself
+    // check 1)
+    if(node->parent != nullptr) {
+        double parent_cost = node->parent->cost_so_far;
+        if (!abs(parent_cost + node->cost_to_parent - node->cost_so_far) < epsilon){
+            std::cout <<  "ERROR:cost is wrong"<< std::endl;
+            return false;
+        }
+
+    }
+    else {
+        std::cout <<  "ERROR:node parent does not exit"<< std::endl;
+        return false;
+    }
+    // check 2) &
+    // check for children
+    RRT_Node *child_node = node->firstChild;
+    while(child_node != nullptr){
+        if (child_node->parent != node){
+            std::cout <<  "ERROR:node's child node parent does not equal itself"<< std::endl;
+            return false;
+        }
+        if(!check_node_correctness(child_node)){
+            return false;
+        }
+        child_node = child_node->nextSibling;
+    }
+
+
+
+    return true;
+}
+
+
 
 int main(int argc, char *argv[]) {
     int thread_num = 1;
@@ -322,5 +375,13 @@ int main(int argc, char *argv[]) {
     }
     myfile.close();
     std::cout << "path size " << path.size() << " length " << rrt.get_path_length() << std::endl;
+
+    if (check_tree_correctness(rrt.start_node)){
+        std::cout << "Tree Valid " << std::endl;
+    }
+    else{
+        std::cout << "Tree InValid " << std::endl;
+    }
+
     return 0;
 }
