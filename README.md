@@ -21,3 +21,5 @@ Parallel version is being worked on.
 
 On Dec 9, I already made a prrtstar work on some simple problems. However, the speedup is not as satisfactory as expected.
 I shifted my focus a little bit on ao-rrt and made a basic version work.
+
+On Dec 14, we wrote code to check if the tree is correct, i.e. a node's child's parent is the node itself, and the cost sum matches. Thank Yifan for writing those.
