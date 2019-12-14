@@ -252,6 +252,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
     finished.fetch_add(1);
     std::unique_lock<std::mutex> lk(problem->m);
     cv.wait(lk, []{return to_processed == finished;});
+    //check if trees is valid
     if(thread_id == 0){
         if (check_tree_correctness(problem->start_node)){
             std::cout << "Tree Valid " << std::endl;
@@ -260,6 +261,16 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
             std::cout << "Tree InValid " << std::endl;
         }
     }
+    //now check if there is any node "floating"
+    memory.reset(); 
+    double *tmpdata;
+    RRT_Node *tmpnode;
+    int counter = 0;
+    for (int i = 0; i < sample_num ; i++){    
+        std::tie(tmpdata,tmpnode)=memory.get_data_node();
+        if (tmpnode->parent == nullptr) counter++;
+    }
+    std::cout << "thread:"<< " " <<thread_id  << " " << "has " << counter << " " << "nodes without a parent" << std::endl;
     tl_free(&problem->tree->mempool, NULL);
     lk.unlock();
     cv.notify_one();

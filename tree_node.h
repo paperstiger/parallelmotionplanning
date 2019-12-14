@@ -155,6 +155,10 @@ public:
         return std::make_pair(data_region + cur_count * dim, (TreeNode*)node_region + cur_count);
     }
 
+    void reset() {
+        inner_count = 0;
+    }
+
     ~memory_manager() {
         free(node_region);
         free(data_region);
