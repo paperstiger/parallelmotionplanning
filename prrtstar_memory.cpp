@@ -239,8 +239,10 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                         // first, search for cani in cani's parent's children
                         RRT_Node *parent = cani->parent;
                         bool rmflag = parent->remove_child(cani);
-                        if(!rmflag)
+                        if(!rmflag){
                             std::cout << "at thread " << thread_id << " iteration " << i << "\n";
+                            continue;  // TODO: may remove cani from its new parents if possible
+                        }
                         new_node->add_child(cani, cani_dist);
                         // hopefully we can play with cani now
                         double new_cost = cani->cost_so_far;

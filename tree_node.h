@@ -12,7 +12,7 @@ struct TreeNode{
     TreeNode * volatile firstChild = nullptr;
     TreeNode * volatile nextSibling = nullptr;
     TreeNode * volatile parent = nullptr;
-    bool rewiring = false;  // only allow one node's child being rewired
+    std::atomic_flag rewiring = ATOMIC_FLAG_INIT;  // only allow one node's child being rewired
     double cost_so_far = std::numeric_limits<double>::infinity();
     double cost_to_parent = std::numeric_limits<double>::infinity();
 
@@ -35,7 +35,7 @@ void TreeNode::init(double *val) {
     firstChild = nullptr;
     nextSibling = nullptr;
     parent = nullptr;
-    rewiring = false;  // only allow one node's child being rewired
+    rewiring.clear(std::memory_order_release);  // only allow one node's child being rewired
     cost_so_far = std::numeric_limits<double>::infinity();
     cost_to_parent = std::numeric_limits<double>::infinity();
 }
@@ -53,21 +53,20 @@ void TreeNode::add_child(TreeNode *node, double dist){
 }
 
 bool TreeNode::remove_child(TreeNode *node) {
-    while(rewiring)
-        std::this_thread::yield();
-    rewiring = true;
+    while(rewiring.test_and_set(std::memory_order_acquire))
+        ;
     __sync_synchronize();
     TreeNode *test = firstChild;
     if(test == node) {
         firstChild = test->nextSibling;  // maybe null and it is fine
-        rewiring = false;
+        rewiring.clear(std::memory_order_release);
         return true;
     }
     TreeNode *prev_node;
     while(test != node) {
         if(test == nullptr){
             std::cout << "cannot find node\n";
-            rewiring = false;
+            rewiring.clear(std::memory_order_release);
             return false;  // data may be corrupted, cannot find node within children lists
         }
         prev_node = test;
@@ -75,14 +74,13 @@ bool TreeNode::remove_child(TreeNode *node) {
     }
     prev_node->nextSibling = test->nextSibling;  // this effectively removes node
     __sync_synchronize();
-    rewiring = false;
+    rewiring.clear(std::memory_order_release);
     return true;
 }
 
 void TreeNode::child_traversal(std::list<TreeNode*> &nodes) {
-    while(rewiring)
-        std::this_thread::yield();
-    rewiring = true;
+    while(rewiring.test_and_set(std::memory_order_acquire))
+        ;
     __sync_synchronize();
     TreeNode *to_insert = firstChild;
     while(to_insert != nullptr) {
@@ -90,12 +88,12 @@ void TreeNode::child_traversal(std::list<TreeNode*> &nodes) {
         to_insert = to_insert->nextSibling;
     }
     __sync_synchronize();
-    rewiring = false;
+    rewiring.clear(std::memory_order_release);
 }
 
 // reduce cost for the subtree starting from this node
 void TreeNode::set_cost_recursive(double new_cost) {
-    rewiring = true;
+    while(rewiring.test_and_set(std::memory_order_acquire));
     __sync_synchronize();
     cost_so_far = new_cost;
     TreeNode *child = firstChild;
@@ -109,7 +107,7 @@ void TreeNode::set_cost_recursive(double new_cost) {
         child = child->nextSibling;
     }
     __sync_synchronize();
-    rewiring = false;
+    rewiring.clear(std::memory_order_release);
 }
 
 void TreeNode::update_cost(double cost) {
