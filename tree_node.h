@@ -5,6 +5,7 @@
 #include <limits>
 #include <list>
 #include "planner_common.h"
+#include "container.h"
 
 struct TreeNode{
     double* value = nullptr;
@@ -23,10 +24,14 @@ struct TreeNode{
     bool remove_child(TreeNode *node);
 
     void child_traversal(std::list<TreeNode*> &nodes);
+
+    void child_traversal(List<TreeNode*> *nodes);
     
     void set_cost_recursive(double new_cost);
 
-    void update_cost(double new_cost);
+    void update_cost_old(double new_cost);
+
+    void update_cost(double cost);
 };
 
 void TreeNode::init(double *val) {
@@ -91,6 +96,21 @@ void TreeNode::child_traversal(std::list<TreeNode*> &nodes) {
     rewiring.clear(std::memory_order_release);
 }
 
+void TreeNode::child_traversal(List<TreeNode*> *nodes) {
+    while(rewiring.test_and_set(std::memory_order_acquire))
+        ;
+    __sync_synchronize();
+    TreeNode *to_insert = firstChild;
+    TreeNode **tmp;
+    while(to_insert != nullptr) {
+        std::tie(tmp, nodes) = nodes->get_one();
+        *tmp = to_insert;
+        to_insert = to_insert->nextSibling;
+    }
+    __sync_synchronize();
+    rewiring.clear(std::memory_order_release);
+}
+
 // reduce cost for the subtree starting from this node
 void TreeNode::set_cost_recursive(double new_cost) {
     while(rewiring.test_and_set(std::memory_order_acquire));
@@ -110,7 +130,7 @@ void TreeNode::set_cost_recursive(double new_cost) {
     rewiring.clear(std::memory_order_release);
 }
 
-void TreeNode::update_cost(double cost) {
+void TreeNode::update_cost_old(double cost) {
     cost_so_far = cost;
     std::list<TreeNode*> nodes_list;
     nodes_list.push_back(this);
@@ -135,6 +155,46 @@ void TreeNode::update_cost(double cost) {
         else {
             //std::cout << "parent changed\n";
             nit = nodes_list.erase(nit);
+        }
+    }
+}
+
+void TreeNode::update_cost(double cost) {
+    cost_so_far = cost;
+    List<TreeNode*> nodes_list(100);
+    List<TreeNode*> *list_nodes = &nodes_list;
+    TreeNode **tmp;
+    std::tie(tmp, list_nodes) = list_nodes->get_one();
+    *tmp = this;
+    child_traversal(list_nodes);
+    std::tie(tmp, list_nodes) = list_nodes->get_one();
+    *tmp = nullptr;
+    // prepare for some traversal
+    ListIterator<TreeNode*> pit, nit;
+    pit.init(list_nodes);
+    nit.init(list_nodes);
+    nit.next();
+    TreeNode *star_nit, *star_pit;
+    while(nit.is_valid()) {
+        star_nit = nit.get_val();
+        if(star_nit == nullptr) {
+            nit.next();
+            pit.next();
+            continue;
+        }
+        // make sure its parent is still pit
+        TreeNode *parent = pit.get_val();
+        TreeNode *cur_node = nit.get_val();
+        if(cur_node->parent == parent) {  // this node is rewired to other nodes
+            cur_node->cost_so_far = parent->cost_so_far + cur_node->cost_to_parent;
+            cur_node->child_traversal(list_nodes);
+            std::tie(tmp, list_nodes) = list_nodes->get_one();
+            *tmp = nullptr;
+            nit.next();
+        }
+        else {
+            //std::cout << "parent changed\n";
+            nit.next();
         }
     }
 }

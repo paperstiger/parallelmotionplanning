@@ -1,0 +1,8 @@
+Makefile
+config.h
+config.status
+config.log
+autom4te.cache
+aclocal.m4
+
+.*.*
