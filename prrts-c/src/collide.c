@@ -3,6 +3,7 @@
 #include <math.h>
 #include <assert.h>
 #include "linear.h"
+#include "linear_inline.h"
 #include "collide.h"
 
 int collide_trace = 0;

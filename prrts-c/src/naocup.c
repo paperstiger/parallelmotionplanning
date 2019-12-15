@@ -7,6 +7,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "linear.h"
+#include "linear_inline.h"
 #include "collide.h"
 #include "alloc.h"
 #include "prrts.h"
@@ -873,20 +874,23 @@ print_solution(prrts_solution_t *solution)
 
 int
 naocup_main(int argc, char *argv[])
-{
+{   
+    long thread_count = 4;
+    long sample_count = 20000;
+    //for (int i = 0; i<totalIterations;i++) {
         prrts_system_t *system;
         prrts_options_t options;
         prrts_solution_t *solution;
-        long thread_count = 2;
+        //long thread_count = 4;
         int ch;
-        long sample_count = 250;
+        //long sample_count = 40000;
         hrtimer_t start_time;
         hrtimer_t duration;
         char *ep;
 
         memset(&options, 0, sizeof(options));
         options.gamma = 5.0;
-        options.regional_sampling = false;
+        options.regional_sampling = true;
         options.samples_per_step = 1;
 
         while ((ch = getopt(argc, argv, "t:n:r")) != -1) {
@@ -928,13 +932,23 @@ naocup_main(int argc, char *argv[])
                duration * thread_count / (double)HRTICK,
                (int)thread_count,
                sample_count * (double)HRTICK / duration);
-
+        //listOfTimes[i]=duration / (double)HRTICK;
         if (solution == NULL) {
                 printf("No solution found\n");
         } else {
                 printf("Solution found, length=%u, cost=%f\n", (unsigned)solution->path_length, solution->path_cost);
-                print_solution(solution);
+                //print_solution(solution);
+                //listOfCosts[i] = (solution->path_cost);
         }
 
+        printf("===================================\n");
+    //}
+    
+    // printf("Times: \n");
+    // for(int i=0;i < totalIterations;i++){
+    // printf("%f \n",listOfTimes[i]);}
+    // printf("Costs: \n");
+    // for(int i=0;i < totalIterations;i++){
+    // printf("%f \n",listOfCosts[i]);}
         return 0;
 }

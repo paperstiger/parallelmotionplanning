@@ -1,6 +1,5 @@
 #ifndef LINEAR_H
 #define LINEAR_H
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -42,24 +41,15 @@ typedef union {
 } vec4_t;
 
 
-#if __GNUC__ && !__GNUC_STD_INLINE__
-#  define INLINE inline
-#else
-#  define INLINE inline
-#endif
-
-#include "linear_inline.h"
-
 extern const mat4_t M4_IDENTITY;
 
 double v3_dist_segment_point(const vec3_t *s0, const vec3_t *s1, const vec3_t *pt);
 void m4_print(const mat4_t *m);
 
-#undef INLINE
-
-
 #ifdef __cplusplus
 }
 #endif
+
+//#include "linear_inline.h"
 
 #endif /* LINEAR_H */
