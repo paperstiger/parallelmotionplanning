@@ -253,6 +253,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                     cand->add_child(new_node, it->second);
                     problem->update_goal_parent(new_node, goal_radius, env);
                     kd_insert(problem->tree, new_node->value, new_node);
+                    problem->tree_size.fetch_add(1, std::memory_order_relaxed);
                     // try to rewire
                     for (auto rit = nn_list.rbegin(); rit != nn_list.rend(); rit++) {
                         RRT_Node *cani = (RRT_Node*)(rit->first);
