@@ -32,10 +32,12 @@ I also want to test if I can manage memory on my own.
 #include "hrtimer.h"
 #include "naocup.h"
 
+// Ugly hack for dimension of the system
+int __sys_dim__ = 0;
 double MyDistFun(const double *a, const double *b)
 {
     double dist = 0;
-    for(int i = 0; i < 2; i++)
+    for(int i = 0; i < __sys_dim__; i++)
         dist += pow(a[i] - b[i], 2);
     return sqrt(dist);
 }
@@ -77,6 +79,7 @@ public:
     std::atomic<int> tree_size;
     std::vector<memory_manager*> managers;
     std::mutex m;
+    bool resample_to_feasible;
 
     void set_start_goal(const Vector &start_, const Vector &goal_) {
         start = start_;
@@ -85,6 +88,7 @@ public:
 
     RRT(Env *env_) : tree(nullptr), env(env_), goal_node(nullptr) {
         extend_radius = 0.1;
+        resample_to_feasible = false;
         options = new RRTOption;
     }
 
@@ -94,6 +98,7 @@ public:
             start_node = new RRT_Node;
             start_node->value = start.data();
             start_node->cost_so_far = 0;  // I do not modify cost_to_parent since it has no parents
+            __sys_dim__ = env->dim;  // TODO: remove this ugly hack for system dimension, maybe use std::function
             tree = kd_create_tree(env->dim, env->min.data(), env->max.data(),
                         MyDistFun,
                         start.data(), start_node);
@@ -176,8 +181,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
     double *x = new double[problem->env->dim];
     int DIM = problem->env->dim;
     for(int i = 0; i < sample_num; i++) {
-        collision_check_counter ++;
-        printf("%d\n",i);
+        // printf("%d\n",i);
         problem->env->sample(x, thread_id, thread_num);
         // find closest point
         double dist = 0;
@@ -185,6 +189,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
         double radius = problem->options->gamma *  // the radius being queried
                 pow(log((double)step_no + 1.0) / (double)(step_no + 1.0),
                     1.0 / (double)problem->env->dim);
+        goal_radius = radius;
         //std::cout << "radius = " << radius << "\n";
         nn_list.clear();
         int near_list_size = kd_near(problem->tree, x, radius, kd_near_call_back, &nn_list);
@@ -198,8 +203,10 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
             // extend x so that its distance is exact radius
             problem->_extend_within(x, near_node->value, radius / nearest_dist);
             // check collision
+            collision_check_counter++;
             if(!problem->env->is_free(x, near_node->value)) {  // sample is infeasible from near_node
-                i--;  // make sure enough feasible samples are collected
+                if(problem->resample_to_feasible)
+                    i--;  // make sure enough feasible samples are collected
                 continue;
             }
             // create node and return, no rewiring is needed
@@ -223,6 +230,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                 RRT_Node *cand = (RRT_Node*)(it->first);
                 if(cand == problem->goal_node)  // this is the goal node, we rewire based on if its has parent
                     continue;
+                collision_check_counter++;
                 if(problem->env->is_free(x, cand->value)) {  //  collision free, can add node
                     std::tie(cmndata, cmnnode) = memory.get_data_node();
                     new_node_created = true;
@@ -241,6 +249,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                             continue;
                         }
                         // collision free has to be satisfied
+                        collision_check_counter++;
                         if(!problem->env->is_free(x, cani->value))
                             continue;
                         // rewiring is needed
@@ -263,7 +272,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                     break;
                 }
             }
-            if(!new_node_created)
+            if(problem->resample_to_feasible && (!new_node_created))
                 i--;
         }
     }
@@ -448,24 +457,14 @@ int main(int argc, char *argv[]) {
         }
     }
     std::cout << "Running with " << thread_num << " threads\n";
-    srand(0);
+    //srand(0);  // Yifan: uncomment this to have deterministic results
     printf("Debugging flag 0\n");
-    
-    
-    //printf("Debugging flag 1\n");
-    
-    //printf("Debugging flag 2\n");
     
     NaocupEnv env;
     RRT rrt(&env);
     rrt.options->gamma = 5.0;
     rrt.extend_radius = 0.6;
     rrt.set_start_goal(env.start,env.goal);
-
-    // int step_no = 1000;
-    // double radius = pow(log((double)step_no + 1.0) / (double)(step_no + 1.0),
-    //                 1.0 / (double)10);
-    // printf("%f\n",radius);
 
     // NaiveEnv env;
     // RRT rrt(&env);
