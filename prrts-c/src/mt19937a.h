@@ -1,6 +1,10 @@
 #ifndef MT19937A_H
 #define MT19937A_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+	
 /* Period parameters */  
 #define MT19937A_N 624
 
@@ -23,5 +27,9 @@ double mt19937a_genrand_real2(mt19937a_t *rnd);
 double mt19937a_genrand_real3(mt19937a_t *rnd);
 /* generates a random number on [0,1) with 53-bit resolution*/
 double mt19937a_genrand_res53(mt19937a_t *rnd);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MT19937A_H */

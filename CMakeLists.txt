@@ -28,7 +28,7 @@ add_executable(prrts_nomem parallel_rrtstar_kd.cpp kdtree.c alloc.cpp)
 target_link_libraries(prrts_nomem pthread)
 
 add_executable(prrts prrtstar_memory.cpp kdtree.c kdtree.h alloc.cpp alloc.h tree_node.h planner_common.h prrts-c/src/naocup.c prrts-c/src/hrtimer.c prrts-c/src/linear.c prrts-c/src/collide.c
-prrts-c/src/prrts.c)
+prrts-c/src/prrts.c prrts-c/src/mt19937a.c prrts-c/src/stats.c)
 target_link_libraries(prrts pthread)
 
 add_executable(kinorrt kino_rrt_entry.cpp kino_rrt_test_pen.cpp kino_rrt_test_acrobot.cpp kino_tree_helper.h kino_tree_helper.cpp ${KD_FILE})

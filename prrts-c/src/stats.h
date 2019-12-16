@@ -1,7 +1,14 @@
 #ifndef STATS_H
 #define STATS_H
 
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "hrtimer.h"
+
 
 typedef struct time_stats {
         hrtimer_t min;
@@ -38,5 +45,7 @@ void count_stats_clear(count_stats_t *stats);
 void count_stats_add(count_stats_t *stats, int count);
 void count_stats_accum(count_stats_t *accum, const count_stats_t *stat);
 void count_stats_print(const char *name, const count_stats_t *stats);
-
+#ifdef __cplusplus
+}
+#endif
 #endif /* STATS_H */
