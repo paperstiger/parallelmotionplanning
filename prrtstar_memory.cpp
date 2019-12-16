@@ -73,6 +73,7 @@ public:
     double extend_radius;
     Vector start, goal;
     kd_tree_t *tree;
+    std::vector<Env*> *envs;
     Env *env;
     RRT_Node *goal_node, *start_node;
     RRTOption *options;
@@ -86,15 +87,21 @@ public:
         goal = goal_;
     }
 
-    RRT(Env *env_) : tree(nullptr), env(env_), goal_node(nullptr) {
+    RRT() : tree(nullptr), env(nullptr), goal_node(nullptr) {
         extend_radius = 0.1;
-        resample_to_feasible = false;
+        resample_to_feasible = true;
         options = new RRTOption;
+    }
+
+    void set_envs(std::vector<Env*> *_envs) {
+        envs = _envs;
+        env = _envs->at(0);
     }
 
     // following Kris convention, this function samples more
     bool plan_more(int num, int thread_num) {
         if(!tree){
+            assert(thread_num <= envs->size());
             start_node = new RRT_Node;
             start_node->value = start.data();
             start_node->cost_so_far = 0;  // I do not modify cost_to_parent since it has no parents
@@ -119,9 +126,9 @@ public:
         return true;  // no exception raised means success
     }
 
-    void update_goal_parent(RRT_Node *node, double radius) {
+    void update_goal_parent(RRT_Node *node, double radius, Env *_env) {
         double dist = MyDistFun(node->value, goal.data());
-        if((dist > radius) || (!env->is_free(node->value, goal.data())))
+        if((dist > radius) || (!_env->is_free(node->value, goal.data())))
             return;
         if(node->cost_so_far + dist < goal_node->cost_so_far) {
             if(goal_node->parent)
@@ -169,6 +176,7 @@ public:
 void thread_fun(RRT *problem, int sample_num, int thread_id)
 {
     int collision_check_counter = 0;
+    Env *env = problem->envs->at(thread_id);
     //std::cout << "Entering thread " << std::this_thread::get_id() << std::endl;
     memory_manager *mem_pnter = new memory_manager(sample_num, problem->env->dim);
     problem->managers[thread_id] = mem_pnter;
@@ -181,8 +189,13 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
     double *x = new double[problem->env->dim];
     int DIM = problem->env->dim;
     for(int i = 0; i < sample_num; i++) {
-        // printf("%d\n",i);
-        problem->env->sample(x, thread_id, thread_num);
+        env->sample(x, thread_id, thread_num);
+        if(!env->is_clear(x)) {
+            i--;
+            continue;
+        }
+        if(i % 100 == 0)
+            printf("%d\n",i);
         // find closest point
         double dist = 0;
         int step_no = problem->tree_size.load();
@@ -204,7 +217,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
             problem->_extend_within(x, near_node->value, radius / nearest_dist);
             // check collision
             collision_check_counter++;
-            if(!problem->env->is_free(x, near_node->value)) {  // sample is infeasible from near_node
+            if(!env->is_free(x, near_node->value)) {  // sample is infeasible from near_node
                 if(problem->resample_to_feasible)
                     i--;  // make sure enough feasible samples are collected
                 continue;
@@ -220,7 +233,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
             kd_insert(problem->tree, new_node->value, new_node);
             problem->tree_size.fetch_add(1, std::memory_order_relaxed);
             // check if goal can be routed here
-            problem->update_goal_parent(new_node, goal_radius);
+            problem->update_goal_parent(new_node, goal_radius, env);
         }
         else{  // link new node to the nearest one and perform rewiring based on that
             // first find the closest node to connect into
@@ -231,14 +244,14 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                 if(cand == problem->goal_node)  // this is the goal node, we rewire based on if its has parent
                     continue;
                 collision_check_counter++;
-                if(problem->env->is_free(x, cand->value)) {  //  collision free, can add node
+                if(env->is_free(x, cand->value)) {  //  collision free, can add node
                     std::tie(cmndata, cmnnode) = memory.get_data_node();
                     new_node_created = true;
                     std::memcpy(cmndata, x, DIM * sizeof(double));
                     cmnnode->init(cmndata);
                     RRT_Node *new_node = cmnnode;
                     cand->add_child(new_node, it->second);
-                    problem->update_goal_parent(new_node, goal_radius);
+                    problem->update_goal_parent(new_node, goal_radius, env);
                     kd_insert(problem->tree, new_node->value, new_node);
                     // try to rewire
                     for (auto rit = nn_list.rbegin(); rit != nn_list.rend(); rit++) {
@@ -250,7 +263,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                         }
                         // collision free has to be satisfied
                         collision_check_counter++;
-                        if(!problem->env->is_free(x, cani->value))
+                        if(!env->is_free(x, cani->value))
                             continue;
                         // rewiring is needed
                         // we need to delete this node, rewire to another node
@@ -350,6 +363,10 @@ public:
             x[1] = ((double)rand() / RAND_MAX * (max[1] - min[1]) + min[1]);
         }
     }
+
+    bool is_clear(const double *v) {
+        return true;
+    }
 };
 
 #define REGION_SPLIT_AXIS 0
@@ -377,6 +394,10 @@ public:
         return system->link_func(system_data,v1,v2);
     }
 
+    bool is_clear(const double *v) {
+        return system->clear_func(system_data, v);
+    }
+
     void sample(double *x, int id, int num) {
         if(num <= 1) {  // num if not greater than 1
             double *p = x;
@@ -397,7 +418,7 @@ public:
         }
         //printf("\n");
     }
-
+    ~NaocupEnv() {}
 };
 
 bool check_tree_correctness(RRT_Node *start_node){
@@ -460,11 +481,15 @@ int main(int argc, char *argv[]) {
     //srand(0);  // Yifan: uncomment this to have deterministic results
     printf("Debugging flag 0\n");
     
-    NaocupEnv env;
-    RRT rrt(&env);
+    std::vector<Env*> envs;
+    for(int i = 0; i < thread_num; i++)
+        envs.push_back(new NaocupEnv);
+    RRT rrt;
+    rrt.set_envs(&envs);
     rrt.options->gamma = 5.0;
     rrt.extend_radius = 0.6;
-    rrt.set_start_goal(env.start,env.goal);
+    NaocupEnv env;
+    rrt.set_start_goal(env.start, env.goal);
 
     // NaiveEnv env;
     // RRT rrt(&env);
@@ -490,5 +515,7 @@ int main(int argc, char *argv[]) {
     }
     myfile.close();
     std::cout << "path size " << path.size() << " length " << rrt.get_path_length() << std::endl;
+    for(auto _env : envs)
+        delete _env;
     return 0;
 }

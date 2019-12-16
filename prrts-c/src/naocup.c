@@ -875,7 +875,7 @@ print_solution(prrts_solution_t *solution)
 int
 naocup_main(int argc, char *argv[])
 {   
-    long thread_count = 4;
+    long thread_count = 1;
     long sample_count = 20000;
     //for (int i = 0; i<totalIterations;i++) {
         prrts_system_t *system;

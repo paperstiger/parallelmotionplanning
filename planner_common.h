@@ -7,6 +7,7 @@ typedef std::vector<double> Vector;
 class CollisionChecker{
 public:
     virtual bool is_free(const double *v1, const double *v2) = 0;
+    virtual bool is_clear(const double *v1) = 0;
 };
 
 // a base class for an environment, it has to have to implement some functions
