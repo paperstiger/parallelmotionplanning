@@ -128,12 +128,16 @@ public:
 
     void update_goal_parent(RRT_Node *node, double radius, Env *_env) {
         double dist = MyDistFun(node->value, goal.data());
-        if((dist > radius) || (!_env->is_free(node->value, goal.data())))
+        if((dist > radius) || (!_env->is_free(node->value, goal.data()))) {
+            node->cost_to_goal = std::numeric_limits<double>::infinity();
             return;
+        }
+        node->cost_to_goal = dist;  // cache this and collision check
         if(node->cost_so_far + dist < goal_node->cost_so_far) {
-            if(goal_node->parent)
-                goal_node->parent->remove_child(goal_node);
-            node->add_child(goal_node, dist);
+            //printf("up %f %f\n", node->cost_so_far + dist, goal_node->cost_so_far);
+            goal_node->cost_so_far = node->cost_so_far + dist;
+            goal_node->cost_to_parent = dist;
+            goal_node->parent = node;
         }
     }
 
@@ -183,7 +187,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
     int thread_num = problem->managers.size();
     auto &memory = *mem_pnter;
     list_pnter_dist nn_list;
-    double goal_radius = 0.1;
+    double goal_radius = 0.2;
     double *cmndata;
     RRT_Node *cmnnode;
     double *x = new double[problem->env->dim];
@@ -199,17 +203,22 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
         // find closest point
         double dist = 0;
         int step_no = problem->tree_size.load();
+        if(step_no ==  224)
+            printf("224\n");
         double radius = problem->options->gamma *  // the radius being queried
                 pow(log((double)step_no + 1.0) / (double)(step_no + 1.0),
                     1.0 / (double)problem->env->dim);
         goal_radius = radius;
         //std::cout << "radius = " << radius << "\n";
         nn_list.clear();
-        int near_list_size = kd_near(problem->tree, x, radius, kd_near_call_back, &nn_list);
+        int near_list_size = kd_near(problem->tree, x, radius, kd_near_call_back, &nn_list); // Update to keep path cost, not distance
+        int _to_rewire_num = near_list_size;   // how many rewires do we need
+        //printf("%d %f \n", step_no, x[0]);
         // in two conditions, we switch to nearest neighbor search
         // 1. no node found in the vinicity
         // 2. one node is found but is the goal node; the goal node shall not have any children
         bool new_node_created = false;
+        int nn_index = 0;
         if((near_list_size == 0)) {
             double nearest_dist = 0;
             RRT_Node *near_node = (RRT_Node*)kd_nearest(problem->tree, x, &nearest_dist);
@@ -237,12 +246,15 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
         }
         else{  // link new node to the nearest one and perform rewiring based on that
             // first find the closest node to connect into
-            //lst_pnt_dis.sort([](const pvd &n1, const pvd &n2) {return n1.second < n2.second;});
+            nn_list.sort([](const pvd &n1, const pvd &n2) {return ((RRT_Node*)(n1.first))->cost_so_far + n1.second < ((RRT_Node*)(n2.first))->cost_so_far + n2.second;});
             //std::cout << "rewire " << lst_pnt_dis.size() << " nodes\n";
             for(auto it = nn_list.begin(); it != nn_list.end(); it++) {
+                _to_rewire_num--;  // this one should be skipped
                 RRT_Node *cand = (RRT_Node*)(it->first);
-                if(cand == problem->goal_node)  // this is the goal node, we rewire based on if its has parent
-                    continue;
+                //printf("nn id %d q %f dist %f\n", nn_index, cand->value[0], it->second);
+                nn_index++;
+                //if(cand == problem->goal_node)  // this is the goal node, we rewire based on if its has parent
+                //    continue;  // remove because goal is never in the tree
                 collision_check_counter++;
                 if(env->is_free(x, cand->value)) {  //  collision free, can add node
                     std::tie(cmndata, cmnnode) = memory.get_data_node();
@@ -255,33 +267,38 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                     kd_insert(problem->tree, new_node->value, new_node);
                     problem->tree_size.fetch_add(1, std::memory_order_relaxed);
                     // try to rewire
-                    for (auto rit = nn_list.rbegin(); rit != nn_list.rend(); rit++) {
-                        RRT_Node *cani = (RRT_Node*)(rit->first);
-                        double cani_dist = rit->second;
-                        // rewire only if gets a shorter path
-                        if(cani_dist + new_node->cost_so_far >= cani->cost_so_far) {
-                            continue;
+                    if(_to_rewire_num > 0) {
+                        for (auto rit = nn_list.rbegin(); rit != nn_list.rend(); rit++) {
+                            if(_to_rewire_num == 0)
+                                break;
+                            //printf("rewire %d %d\n", i, _to_rewire_num);
+                            _to_rewire_num--;
+                            RRT_Node *cani = (RRT_Node*)(rit->first);
+                            double cani_dist = rit->second;
+                            // rewire only if gets a shorter path
+                            if(cani_dist + new_node->cost_so_far >= cani->cost_so_far) {
+                                continue;
+                            }
+                            // collision free has to be satisfied
+                            collision_check_counter++;
+                            if(!env->is_free(x, cani->value))
+                                continue;
+                            // rewiring is needed
+                            // we need to delete this node, rewire to another node
+                            // traversal needs to make sure prev->next is itself
+                            // delete needs to make sure prev and next are the same
+                            // first, search for cani in cani's parent's children
+                            RRT_Node *parent = cani->parent;
+                            bool rmflag = parent->remove_child(cani);
+                            if(!rmflag){
+                                std::cout << "at thread " << thread_id << " iteration " << i << "\n";
+                                continue;  // TODO: may remove cani from its new parents if possible
+                            }
+                            new_node->add_child(cani, cani_dist);
+                            // hopefully we can play with cani now
+                            double new_cost = cani->cost_so_far;
+                            cani->update_cost(new_cost, problem->goal_node);
                         }
-                        // collision free has to be satisfied
-                        collision_check_counter++;
-                        if(!env->is_free(x, cani->value))
-                            continue;
-                        // rewiring is needed
-                        // we need to delete this node, rewire to another node
-                        // traversal needs to make sure prev->next is itself
-                        // delete needs to make sure prev and next are the same
-                        // first, search for cani in cani's parent's children
-                        RRT_Node *parent = cani->parent;
-                        bool rmflag = parent->remove_child(cani);
-                        if(!rmflag){
-                            std::cout << "at thread " << thread_id << " iteration " << i << "\n";
-                            continue;  // TODO: may remove cani from its new parents if possible
-                        }
-                        new_node->add_child(cani, cani_dist);
-                        // hopefully we can play with cani now
-                        double new_cost = cani->cost_so_far;
-                        // cani->set_cost_recursive(new_cost);
-                        cani->update_cost(new_cost);
                     }
                     break;
                 }
@@ -368,6 +385,10 @@ public:
     bool is_clear(const double *v) {
         return true;
     }
+
+    bool is_ingoal(const double *v) {
+        return false;
+    }
 };
 
 #define REGION_SPLIT_AXIS 0
@@ -399,12 +420,16 @@ public:
         return system->clear_func(system_data, v);
     }
 
+    bool is_ingoal(const double *v) {
+        return system->in_goal_func(system_data, v);
+    }
+
     void sample(double *x, int id, int num) {
         if(num <= 1) {  // num if not greater than 1
             double *p = x;
             for(int i = 0; i < dim; i++) {
-                p[i] = ((double)rand() / RAND_MAX * (max[i] - min[i]) + min[i]);
-                //printf("%f",p[i]);
+                p[i] = (double)rand() / RAND_MAX * (max[i] - min[i]) + min[i];
+                //printf("%f ", p[i]);
             }
         }
         else{
@@ -413,8 +438,9 @@ public:
                     x[i] = (id + (double)rand() / RAND_MAX) / num * (max[i] - min[i]) + min[i];
                 }
                 else{
-                    x[i] = ((double)rand() / RAND_MAX * (max[i] - min[i]) + min[i]);
+                    x[i] = (double)rand() / RAND_MAX * (max[i] - min[i]) + min[i];
                 }
+                //printf("%f ", x[i]);
             }
         }
         //printf("\n");
@@ -467,8 +493,6 @@ bool check_node_correctness(RRT_Node *node){
     return true;
 }
 
-
-
 int main(int argc, char *argv[]) {
     int thread_num = 1;
     int sample_num = 100;
@@ -479,16 +503,17 @@ int main(int argc, char *argv[]) {
         }
     }
     std::cout << "Running with " << thread_num << " threads\n";
-    //srand(0);  // Yifan: uncomment this to have deterministic results
+    srand(0);  // Yifan: uncomment this to have deterministic results
     printf("Debugging flag 0\n");
     
+    RRT rrt;
     std::vector<Env*> envs;
     for(int i = 0; i < thread_num; i++)
+        //envs.push_back(new NaiveEnv);
         envs.push_back(new NaocupEnv);
-    RRT rrt;
-    rrt.set_envs(&envs);
     rrt.options->gamma = 5.0;
-    rrt.extend_radius = 0.6;
+    //rrt.options->gamma = 0.5;
+    rrt.set_envs(&envs);
     NaocupEnv env;
     rrt.set_start_goal(env.start, env.goal);
 

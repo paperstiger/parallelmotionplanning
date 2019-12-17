@@ -16,6 +16,7 @@ struct TreeNode{
     std::atomic_flag rewiring = ATOMIC_FLAG_INIT;  // only allow one node's child being rewired
     double cost_so_far = std::numeric_limits<double>::infinity();
     double cost_to_parent = std::numeric_limits<double>::infinity();
+    double cost_to_goal = std::numeric_limits<double>::infinity();  // if infinity, do not connect it to goal, if infeasible
 
     void init(double *val);
 
@@ -31,7 +32,7 @@ struct TreeNode{
 
     void update_cost_old(double new_cost);
 
-    void update_cost(double cost);
+    void update_cost(double cost, TreeNode *goal);
 };
 
 void TreeNode::init(double *val) {
@@ -159,7 +160,7 @@ void TreeNode::update_cost_old(double cost) {
     }
 }
 
-void TreeNode::update_cost(double cost) {
+void TreeNode::update_cost(double cost, TreeNode *goal) {
     cost_so_far = cost;
     List<TreeNode*> nodes_list(100);
     List<TreeNode*> *list_nodes = &nodes_list;
@@ -187,6 +188,12 @@ void TreeNode::update_cost(double cost) {
         TreeNode *cur_node = nit.get_val();
         if(cur_node->parent == parent) {  // this node is rewired to other nodes
             cur_node->cost_so_far = parent->cost_so_far + cur_node->cost_to_parent;
+            if((cur_node->cost_to_goal != std::numeric_limits<double>::infinity()) && (cur_node->cost_so_far + cur_node->cost_to_goal < goal->cost_so_far)) {
+                //printf("re %f %f\n", cur_node->cost_so_far + cur_node->cost_to_goal, goal->cost_so_far);
+                goal->cost_so_far = cur_node->cost_so_far + cur_node->cost_to_goal;
+                goal->parent = cur_node;
+                goal->cost_to_parent = cur_node->cost_to_goal;
+            }
             cur_node->child_traversal(list_nodes);
             std::tie(tmp, list_nodes) = list_nodes->get_one();
             *tmp = nullptr;

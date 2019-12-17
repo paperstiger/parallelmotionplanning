@@ -736,6 +736,7 @@ nao_in_goal(void *system_arg, const double *config)
         nao_world_t *world = (nao_world_t*)system_arg;
 
         compute(world, config);
+        printf("call in goal");
         
         return world->in_goal;
 }
@@ -852,22 +853,20 @@ print_solution(prrts_solution_t *solution)
         printf("angleList = [\\\n");
         for (i=0 ; i<DIMENSIONS ; ++i) {
                 printf("  [ ");
-                for (j=1 ; j<solution->path_length ; ++j) {
+                for (j=0 ; j<solution->path_length ; ++j) {
                         printf("%f, ", solution->configs[j][i]);
                 }
                 printf("], \\\n");
         }
         printf("]\n");
         printf("times = [\\\n");
-        for (i=0 ; i<DIMENSIONS ; ++i) {
-                sum = 0.0;
-                printf("  [ ");
-                for (j=1 ; j<solution->path_length ; ++j) {
-                        sum += nao_dist(solution->configs[j-1], solution->configs[j]);
-                        printf("%f, ", sum);
-                }
-                printf("], \\\n");
+        sum = 0.0;
+        printf("  [ ");
+        for (j=1 ; j<solution->path_length ; ++j) {
+                sum += nao_dist(solution->configs[j-1], solution->configs[j]);
+                printf("%f, ", sum);
         }
+        printf("], \\\n");
         printf("]\n");
 }
 
@@ -937,7 +936,7 @@ naocup_main(int argc, char *argv[])
                 printf("No solution found\n");
         } else {
                 printf("Solution found, length=%u, cost=%f\n", (unsigned)solution->path_length, solution->path_cost);
-                //print_solution(solution);
+                print_solution(solution);
                 //listOfCosts[i] = (solution->path_cost);
         }
 
