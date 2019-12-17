@@ -573,6 +573,10 @@ public:
     return sqrt(dist);
     }
 
+    bool is_ingoal(const double *v) {
+        return false;
+    }
+
 
     ~KlamptEnv() {}
 };
