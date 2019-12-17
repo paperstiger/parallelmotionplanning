@@ -18,10 +18,10 @@ find_package(Klampt REQUIRED)
 #COMPILER SETTINGS (default: Release) and flags
 INCLUDE(CompilerSettings)
 ADD_DEFINITIONS(${KLAMPT_DEFINITIONS})
-message(info ${KLAMPT_INCLUDE_DIRS})
+# message(info ${KLAMPT_INCLUDE_DIRS})
 INCLUDE_DIRECTORIES(${KLAMPT_INCLUDE_DIRS})
-message(${KLAMPT_INCLUDE_DIRS})
-message(${KLAMPT_LIBRARIES})
+# message(${KLAMPT_INCLUDE_DIRS})
+# message(${KLAMPT_LIBRARIES})
 include_directories(/home/motion/Klampt/include/Klampt)
 include_directories(${EIGEN3_INCLUDE_DIR} prrts-c/src/)
 
@@ -41,9 +41,19 @@ set(KD_FILE kdtree.h kdtree.c alloc.cpp alloc.h)
 #add_executable(prrts_nomem parallel_rrtstar_kd.cpp kdtree.c alloc.cpp)
 #target_link_libraries(prrts_nomem pthread)
 
-add_executable(prrts prrtstar_memory.cpp kdtree.c kdtree.h alloc.cpp alloc.h tree_node.h planner_common.h prrts-c/src/naocup.c prrts-c/src/hrtimer.c prrts-c/src/linear.c prrts-c/src/collide.c
-prrts-c/src/prrts.c prrts-c/src/mt19937a.c prrts-c/src/stats.c)
+set(PRRTS_SRC prrtstar_memory.cpp prrtstar.h kdtree.c kdtree.h alloc.cpp alloc.h tree_node.h tree_node.cpp planner_common.h)
+set(NAO_SRC prrts-c/src/naocup.c prrts-c/src/hrtimer.c prrts-c/src/linear.c prrts-c/src/collide.c prrts-c/src/prrts.c prrts-c/src/mt19937a.c prrts-c/src/stats.c)
+add_executable(prrts ${PRRTS_SRC} klampt_example.cpp)
 target_link_libraries(prrts pthread ${KLAMPT_LIBRARIES} tiff log4cxx)
+
+add_executable(prrts_klampt ${PRRTS_SRC} klampt_example.cpp)
+target_link_libraries(prrts_klampt pthread ${KLAMPT_LIBRARIES} tiff log4cxx)
+
+add_executable(prrts_nao ${PRRTS_SRC} ${NAO_SRC} nao_example.cpp)
+target_link_libraries(prrts_klampt pthread)
+
+add_executable(prrts_2d ${PRRTS_SRC} twodim_example.cpp)
+target_link_libraries(prrts_2d pthread)
 
 #add_executable(kinorrt kino_rrt_entry.cpp kino_rrt_test_pen.cpp kino_rrt_test_acrobot.cpp #kino_tree_helper.h kino_tree_helper.cpp ${KD_FILE})
 #target_link_libraries(kinorrt pthread)

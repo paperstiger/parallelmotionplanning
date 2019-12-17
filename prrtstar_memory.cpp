@@ -19,27 +19,19 @@ I also want to test if I can manage memory on my own.
 #include "kdtree.h"
 #include "arrayutils.h"
 
-#include "planner_common.h"
-#include "tree_node.h"
+#include "prrtstar.h"
 
 //
 #include <math.h>
 //
 
-#include "collide.h"
-#include "alloc.h"
-#include "prrts.h"
-#include "hrtimer.h"
-#include "naocup.h"
-
-//Klampt stuff
-#include <Klampt/Modeling/World.h>
-#include <Klampt/Modeling/Robot.h>
-#include <Klampt/Modeling/Terrain.h>
-#include <Klampt/Planning/PlannerSettings.h>
-#include <Klampt/Planning/RobotCSpace.h>
 // Ugly hack for dimension of the system
 int __sys_dim__ = 0;
+std::condition_variable cv;
+int to_processed;
+std::atomic<int> finished;
+const bool TEST_TREE_VALIDITY = false;
+
 double MyDistFun(const double *a, const double *b)
 {
     double dist = 0;
@@ -59,8 +51,6 @@ void kd_near_call_back(void *data, int no, void *value, double dist) {
     lst->push_back(std::make_pair(value, dist));
 }
 
-// this class maintains some cool stuff
-class RRT;
 // write subroutine for each thread
 // problem is a pointer to the RRT instance
 // found is a global indicator of exit, does not have to be atomic
@@ -68,126 +58,72 @@ class RRT;
 void thread_fun(RRT *problem, int sample_num, int);
 bool check_node_correctness(RRT_Node *node);
 bool check_tree_correctness(RRT_Node *start_node);
-std::condition_variable cv;
-int to_processed;
-std::atomic<int> finished;
-const bool TEST_TREE_VALIDITY = false;
 
 
-class RRT{
-public:
-    double extend_radius;
-    gVector start, goal;
-    kd_tree_t *tree;
-    std::vector<Env*> *envs;
-    Env *env;
-    RRT_Node *goal_node, *start_node;
-    RRTOption *options;
-    std::atomic<int> tree_size;
-    std::vector<memory_manager*> managers;
-    std::mutex m;
-    bool resample_to_feasible;
-
-    void set_start_goal(const gVector &start_, const gVector &goal_) {
-        start = start_;
-        goal = goal_;
+// following Kris convention, this function samples more
+bool RRT::plan_more(int num, int thread_num) {
+    if(!tree){
+        assert(thread_num <= envs->size());
+        start_node = new RRT_Node;
+        start_node->value = start.data();
+        start_node->cost_so_far = 0;  // I do not modify cost_to_parent since it has no parents
+        __sys_dim__ = env->dim;  // TODO: remove this ugly hack for system dimension, maybe use std::function
+        tree = kd_create_tree(env->dim, env->min.data(), env->max.data(),
+                    MyDistFun,
+                    start.data(), start_node);
+        goal_node = new RRT_Node;  // goal node is created but not in in kd_tree
+        goal_node->value = goal.data();
+        // kd_insert(tree, goal_node->value.data(), goal_node);  // RRT star has to start with two nodes
+        tree_size.store(1, std::memory_order_relaxed);
     }
-
-    RRT() : tree(nullptr), env(nullptr), goal_node(nullptr) {
-        extend_radius = 0.1;
-        resample_to_feasible = true;
-        options = new RRTOption;
+    std::vector<std::thread> threads;
+    managers.resize(thread_num);
+    to_processed = thread_num;
+    finished.store(0);
+    for(int i = 0; i < thread_num; i++) {
+        threads.push_back(std::thread(thread_fun, this, num, i));
     }
+    for(auto &t : threads)
+        t.join();
+    return true;  // no exception raised means success
+}
 
-    void set_envs(std::vector<Env*> *_envs) {
-        envs = _envs;
-        env = _envs->at(0);
+void RRT::update_goal_parent(RRT_Node *node, double radius, Env *_env) {
+    double dist = MyDistFun(node->value, goal.data());
+    if((dist > radius) || (!_env->is_free(node->value, goal.data()))) {
+        node->cost_to_goal = std::numeric_limits<double>::infinity();
+        return;
     }
-
-    // following Kris convention, this function samples more
-    bool plan_more(int num, int thread_num) {
-        if(!tree){
-            assert(thread_num <= envs->size());
-            start_node = new RRT_Node;
-            start_node->value = start.data();
-            start_node->cost_so_far = 0;  // I do not modify cost_to_parent since it has no parents
-            __sys_dim__ = env->dim;  // TODO: remove this ugly hack for system dimension, maybe use std::function
-            tree = kd_create_tree(env->dim, env->min.data(), env->max.data(),
-                        MyDistFun,
-                        start.data(), start_node);
-            goal_node = new RRT_Node;  // goal node is created but not in in kd_tree
-            goal_node->value = goal.data();
-            // kd_insert(tree, goal_node->value.data(), goal_node);  // RRT star has to start with two nodes
-            tree_size.store(1, std::memory_order_relaxed);
-        }
-        std::vector<std::thread> threads;
-        managers.resize(thread_num);
-        to_processed = thread_num;
-        finished.store(0);
-        for(int i = 0; i < thread_num; i++) {
-            threads.push_back(std::thread(thread_fun, this, num, i));
-        }
-        for(auto &t : threads)
-            t.join();
-        return true;  // no exception raised means success
+    node->cost_to_goal = dist;  // cache this and collision check
+    if(node->cost_so_far + dist < goal_node->cost_so_far) {
+        //printf("up %f %f\n", node->cost_so_far + dist, goal_node->cost_so_far);
+        goal_node->cost_so_far = node->cost_so_far + dist;
+        goal_node->cost_to_parent = dist;
+        goal_node->parent = node;
     }
+}
 
-    void update_goal_parent(RRT_Node *node, double radius, Env *_env) {
-        double dist = MyDistFun(node->value, goal.data());
-        if((dist > radius) || (!_env->is_free(node->value, goal.data()))) {
-            node->cost_to_goal = std::numeric_limits<double>::infinity();
-            return;
-        }
-        node->cost_to_goal = dist;  // cache this and collision check
-        if(node->cost_so_far + dist < goal_node->cost_so_far) {
-            //printf("up %f %f\n", node->cost_so_far + dist, goal_node->cost_so_far);
-            goal_node->cost_so_far = node->cost_so_far + dist;
-            goal_node->cost_to_parent = dist;
-            goal_node->parent = node;
-        }
-    }
-
-    // return the path
-    std::vector<gVector> get_path() {
-        std::vector<gVector> path;
-        if(goal_node->cost_so_far == std::numeric_limits<double>::infinity())
-            return path;
-        std::list<gVector> list_q;
-        auto node = goal_node;
-        while(node) {
-            list_q.push_front(gVector(node->value, node->value + env->dim));
-            node = node->parent;
-        }
-        for(auto iter=list_q.begin(); iter != list_q.end(); iter++)
-            path.push_back(*iter);
+// return the path
+std::vector<gVector> RRT::get_path() {
+    std::vector<gVector> path;
+    if(goal_node->cost_so_far == std::numeric_limits<double>::infinity())
         return path;
+    std::list<gVector> list_q;
+    auto node = goal_node;
+    while(node) {
+        list_q.push_front(gVector(node->value, node->value + env->dim));
+        node = node->parent;
     }
+    for(auto iter=list_q.begin(); iter != list_q.end(); iter++)
+        path.push_back(*iter);
+    return path;
+}
 
-    double get_path_length() const {
-        return goal_node->cost_so_far;
-    }
-
-    ~RRT() {
-        kd_free(tree);
-        delete options;
-        delete start_node;
-        delete goal_node;
-        for(auto &mem : managers)
-            delete mem;
-    }
-
-    void _extend_within(double *x, const double *base, double factor) const {
-        for(size_t i = 0; i < env->dim; i++) {
-            x[i] = base[i] + factor * (x[i] - base[i]);
-        }
-    }
-};
 
 void thread_fun(RRT *problem, int sample_num, int thread_id)
 {
     int collision_check_counter = 0;
     Env *env = problem->envs->at(thread_id);
-    //std::cout << "Entering thread " << std::this_thread::get_id() << std::endl;
     memory_manager *mem_pnter = new memory_manager(sample_num, problem->env->dim);
     problem->managers[thread_id] = mem_pnter;
     int thread_num = problem->managers.size();
@@ -204,13 +140,9 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
             i--;
             continue;
         }
-        if(i % 100 == 0)
-            printf("%d\n",i);
         // find closest point
         double dist = 0;
         int step_no = problem->tree_size.load();
-        if(step_no ==  224)
-            printf("224\n");
         double radius = problem->options->gamma *  // the radius being queried
                 pow(log((double)step_no + 1.0) / (double)(step_no + 1.0),
                     1.0 / (double)problem->env->dim);
@@ -243,8 +175,6 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
             cmnnode->init(cmndata);
             RRT_Node *new_node = cmnnode;
             near_node->add_child(new_node, radius);
-            // no need to update best path unless new_node is close to goal, we only have to check goal
-            // TODO: it may be useful to check if new_node is close to target...
             kd_insert(problem->tree, new_node->value, new_node);
             problem->tree_size.fetch_add(1, std::memory_order_relaxed);
             // check if goal can be routed here
@@ -313,15 +243,12 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                 i--;
         }
     }
-    printf("number of collision checks is %d",collision_check_counter);
+    printf("number of collision checks is %d\n",collision_check_counter);
 
     delete[] x;
     finished.fetch_add(1);
     std::unique_lock<std::mutex> lk(problem->m);
     cv.wait(lk, []{return to_processed == finished;});
-
-    //free system?
-    //free(problem->env->system);
 
     //check if trees is valid
     if(TEST_TREE_VALIDITY) {
@@ -356,248 +283,6 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
     cv.notify_one();
 }
 
-// a naive environment simply from (0, 0) to (1, 1), no obstacle
-class NaiveEnv : public Env {
-public:
-    NaiveEnv() : Env(2) {
-        min = {0, 0};
-        max = {1, 1};
-    }
-
-    bool is_free(const double *v1, const double *v2) {
-        double x1 = v1[0], x2 = v2[0], y1 = v1[1], y2 = v2[1];
-        if((x1 - 0.5) * (x2 - 0.5) >= 0)
-            return true;
-        else{
-            double factor = (0.5 - x2) / (x1 - x2);
-            double interpy = y2 + factor * (y1 - y2);
-            return (interpy > 0.8) | (interpy < 0.2);
-        }
-    }
-
-    void sample(double *x, int id, int num) {
-        if(num <= 1) {  // num if not greater than 1
-            double *p = x;
-            for(int i = 0; i < dim; i++) {
-                p[i] = ((double)rand() / RAND_MAX * (max[i] - min[i]) + min[i]);
-            }
-        }
-        else{
-            x[0] = (id + (double)rand() / RAND_MAX) / num * (max[0] - min[0]) + min[0];
-            x[1] = ((double)rand() / RAND_MAX * (max[1] - min[1]) + min[1]);
-        }
-    }
-
-    bool is_clear(const double *v) {
-        return true;
-    }
-
-    bool is_ingoal(const double *v) {
-        return false;
-    }
-};
-
-#define REGION_SPLIT_AXIS 0
-class NaocupEnv : public Env{
-public:
-    prrts_system_t *system;
-    void *system_data;
-    gVector start,goal;
-    //int thread_num;
-    //NaocupEnv(int thread_num_){
-    NaocupEnv() : Env(10){
-        //thread_num = thread_num_;
-        //dim = 10;
-        system = naocup_create_system();
-        for(int i=0;i<dim;i++){
-            min.push_back(system->min[i]);
-            max.push_back(system->max[i]);
-            start.push_back(system->init[i]);
-            goal.push_back(system->target[i]);
-        }
-        system_data = (system->system_data_alloc_func)(0,system->min,system->max);
-    }
-
-    bool is_free(const double *v1, const double *v2) {
-        return system->link_func(system_data,v1,v2);
-    }
-
-    bool is_clear(const double *v) {
-        return system->clear_func(system_data, v);
-    }
-
-    bool is_ingoal(const double *v) {
-        return system->in_goal_func(system_data, v);
-    }
-
-    void sample(double *x, int id, int num) {
-        if(num <= 1) {  // num if not greater than 1
-            double *p = x;
-            for(int i = 0; i < dim; i++) {
-                p[i] = (double)rand() / RAND_MAX * (max[i] - min[i]) + min[i];
-                //printf("%f ", p[i]);
-            }
-        }
-        else{
-            for(int i=0;i<dim;i++){
-                if(i==REGION_SPLIT_AXIS){
-                    x[i] = (id + (double)rand() / RAND_MAX) / num * (max[i] - min[i]) + min[i];
-                }
-                else{
-                    x[i] = (double)rand() / RAND_MAX * (max[i] - min[i]) + min[i];
-                }
-                //printf("%f ", x[i]);
-            }
-        }
-        //printf("\n");
-    }
-    ~NaocupEnv() {}
-};
-
-#define DISCRETIZATION 0.01
-class KlamptEnv : public Env{
-public:
-    std::shared_ptr<Robot> robot;
-    RobotWorld world;
-    prrts_system_t *system;
-    gVector start;
-    gVector goal = {0.0,-0.9228,0.4403,0.0,0.0,0.0};
-    WorldPlannerSettings planner_settings;
-    //SingleRobotCSpace* robot_CSpace;
-    int index = 0;
-    KlamptEnv() : Env(6){
-        if(!world.LoadXML("klampt_data/tx90obstacles.xml")){
-            printf("Error loading robot world");
-        }
-        robot = world.robots[0];
-        auto tmp = robot->q;
-        auto tmp_min = robot->qMin;
-        auto tmp_max = robot->qMax;
-        for (int i = 1;i<7;i++){
-            start.push_back(tmp[i]);
-            max.push_back(tmp_max[i]);
-            min.push_back(tmp_min[i]); 
-        }
-        planner_settings.InitializeDefault(world);
-        //SingleRobotCSpace robot_CSpace2(world,0,&planner_settings);
-        //robot_CSpace = &robot_CSpace2;
-        //robot_CSpace->Init();
-        
-
-    }
-
-    bool is_clear(const double *v) {
-        Config shared;
-        shared.resize(7);
-        shared[0] = 0;
-        for(int i = 1;i<7;i++){
-            shared[i] = v[i-1];}
-        //copied from RobotCSpace.cpp
-        robot->UpdateConfig(shared);
-        robot->UpdateGeometry();
-        int id = world.RobotID(index);
-        vector<int> idrobot(1,id);
-        vector<int> idothers;
-        for(size_t i=0;i<world.terrains.size();i++)
-            idothers.push_back(world.TerrainID(i));
-        for(size_t i=0;i<world.rigidObjects.size();i++)
-            idothers.push_back(world.RigidObjectID(i));
-        for(size_t i=0;i<world.robots.size();i++) {
-            if((int)i != index)
-              idothers.push_back(world.RobotID(i));
-          }
-        //environment collision check
-          pair<int,int> res = planner_settings.CheckCollision(world,idrobot,idothers);
-          if(res.first >= 0) {
-            //printf("Collision found: %s (%d) - %s (%d)\n",world.GetName(res.first).c_str(),res.first,world.GetName(res.second).c_str(),res.second);
-            return false;
-          }
-          //self collision check
-          res = planner_settings.CheckCollision(world,idrobot);
-          if(res.first >= 0) {
-            //printf("Self-collision found: %s %s\n",world.GetName(res.first).c_str(),world.GetName(res.second).c_str());
-            return false;
-          }
-                return true;
-        }
-
-
-
-    bool is_free(const double *v1, const double *v2) {
-        double d = _MyDistFun(v1,v2);
-        double m[dim];
-        int i;
-
-        if (d < DISCRETIZATION) {
-            return true;
-        }
-
-        for (i=0 ; i<dim ; ++i) {
-                m[i] = (v1[i] + v2[i]) / 2.0;
-                //printf("%f",m[i]);
-        }
-        //printf("\n");
-
-
-        return is_clear(m)
-                && is_free(v1, m)
-                && is_free(m, v2);
-
-    }
-    void sample(double *x, int id, int num) {
-        if(num <= 1) {  // num if not greater than 1
-            double *p = x;
-            for(int i = 0; i < dim; i++) {
-                p[i] = ((double)rand() / RAND_MAX * (max[i] - min[i]) + min[i]);
-                //printf("%f",p[i]);
-            }
-        }
-        else{
-            for(int i=0;i<dim;i++){
-                if(i==REGION_SPLIT_AXIS){
-                    x[i] = (id + (double)rand() / RAND_MAX) / num * (max[i] - min[i]) + min[i];
-                }
-                else{
-                    x[i] = ((double)rand() / RAND_MAX * (max[i] - min[i]) + min[i]);
-                }
-            }
-        }
-        //printf("\n");
-    }
-
-    double _MyDistFun(const double *a, const double *b)
-    {
-    double dist = 0;
-    for(int i = 0; i < dim; i++)
-        dist += pow(a[i] - b[i], 2);
-    return sqrt(dist);
-    }
-
-    bool is_ingoal(const double *v) {
-        return false;
-    }
-
-
-    ~KlamptEnv() {}
-};
-
-
-
-
-
-
-
-bool check_tree_correctness(RRT_Node *start_node){
-    RRT_Node *child_node = start_node->firstChild;
-    while(child_node != nullptr){
-        if(!check_node_correctness(child_node)){
-            return false;
-        }
-        child_node = child_node->nextSibling;
-    }
-    return true;
-}
-
 bool check_node_correctness(RRT_Node *node){
     //auto start_node = problem->start_node;
     //std::cout <<  "test start node:" << start_node->cost_so_far << std::endl;
@@ -630,71 +315,4 @@ bool check_node_correctness(RRT_Node *node){
         child_node = child_node->nextSibling;
     }
     return true;
-}
-
-int main(int argc, char *argv[]) {
-    int thread_num = 1;
-    int sample_num = 100;
-    if(argc > 1) {
-        thread_num = std::atoi(argv[1]);
-        if(argc > 2) {
-            sample_num = std::atoi(argv[2]);
-        }
-    }
-    std::cout << "Running with " << thread_num << " threads\n";
-    srand(0);  // Yifan: uncomment this to have deterministic results
-    printf("Debugging flag 0\n");
-    
-    //KlamptEnv env;
-    // double collision_q[6] = {0,-0.9060,0,0,0,0};
-    // double free_q[6] = {0,0,0,0,0,0};
-    // double free_q2[6] = {0,0.6,0,0,0,0};
-    // bool flag = env.is_free(free_q,collision_q);
-    // if(flag){
-    // printf("\nCollision free \n");}
-    // else{
-    //   printf("\nCollisions \n");}  
-    // bool flag2 = env.is_free(free_q,free_q2);
-    // if(flag2){
-    // printf("\nCollision free \n");}
-    // else{
-    //   printf("\nCollisions \n");}  
-    std::vector<Env*> envs;
-    for(int i = 0; i < thread_num; i++)
-        envs.push_back(new KlamptEnv);
-    RRT rrt;
-    rrt.set_envs(&envs);
-    rrt.options->gamma = 5.0;
-    //rrt.options->gamma = 0.5;
-    rrt.set_envs(&envs);
-    NaocupEnv env;
-    rrt.set_start_goal(env.start, env.goal);
-
-    // NaiveEnv env;
-    // RRT rrt(&env);
-    // rrt.options->gamma = 0.2;
-    // rrt.extend_radius = 0.01;
-    // rrt.set_start_goal({0,0}, {1,1});
-    auto tnow = std::chrono::high_resolution_clock::now();
-    for(int i = 0; i < 1; i++) {
-        std::cout << "i = " << i << std::endl;
-        if(rrt.plan_more(sample_num / thread_num, thread_num))
-            break;
-    }
-    auto tf = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(tf - tnow);
-    std::cout << "Time taken by function: "
-         << (double)duration.count() / 1000000 << " seconds" << std::endl;
-    auto path = rrt.get_path();
-    std::ofstream myfile("path.txt", std::ios::out);
-    for(auto &p : path) {
-        for(auto &n : p)
-            myfile << n << " ";
-        myfile << std::endl;
-    }
-    myfile.close();
-    std::cout << "path size " << path.size() << " length " << rrt.get_path_length() << std::endl;
-    for(auto _env : envs)
-       delete _env;
-    return 0;
 }
