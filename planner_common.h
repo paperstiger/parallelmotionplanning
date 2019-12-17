@@ -2,7 +2,7 @@
 #define PLANNER_COMMON_H
 #include <vector>
 
-typedef std::vector<double> Vector;
+typedef std::vector<double> gVector;
 // a base class for collision checker, it should be implemented by an environment
 class CollisionChecker{
 public:
@@ -19,7 +19,7 @@ public:
     } 
 
     size_t dim;
-    Vector min, max;
+    gVector min, max;
 };
 
 struct RRTOption {
