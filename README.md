@@ -23,3 +23,5 @@ On Dec 9, I already made a prrtstar work on some simple problems. However, the s
 I shifted my focus a little bit on ao-rrt and made a basic version work.
 
 On Dec 14, we wrote code to check if the tree is correct, i.e. a node's child's parent is the node itself, and the cost sum matches. Thank Yifan for writing those.
+
+On Dec 16, I compare line by line to get the same behavior with the reference code. It turns out rewire has to update stuff too. Also change how we treat the goal, may add functionality of plan to some constraint being satisfied.
