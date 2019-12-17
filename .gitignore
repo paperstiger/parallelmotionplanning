@@ -1,3 +1,5 @@
+perf.*
+*callgrind*
 cmake_install.cmake
 Makefile
 *.txt
