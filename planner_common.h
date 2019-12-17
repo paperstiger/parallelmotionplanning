@@ -2,7 +2,13 @@
 #define PLANNER_COMMON_H
 #include <vector>
 
-typedef std::vector<double> Vector;
+typedef std::vector<double> gVector;
+// a base class for collision checker, it should be implemented by an environment
+class CollisionChecker{
+public:
+    virtual bool is_free(const double *v1, const double *v2) = 0;
+    virtual bool is_clear(const double *v1) = 0;
+};
 
 // a base class for an environment, it has to have to implement some functions
 class Env{
@@ -18,7 +24,7 @@ public:
     virtual ~Env() {}
 
     size_t dim;
-    Vector min, max;
+    gVector min, max;
 };
 
 struct RRTOption {

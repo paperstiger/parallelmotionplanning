@@ -32,6 +32,12 @@ I also want to test if I can manage memory on my own.
 #include "hrtimer.h"
 #include "naocup.h"
 
+//Klampt stuff
+#include <Klampt/Modeling/World.h>
+#include <Klampt/Modeling/Robot.h>
+#include <Klampt/Modeling/Terrain.h>
+#include <Klampt/Planning/PlannerSettings.h>
+#include <Klampt/Planning/RobotCSpace.h>
 // Ugly hack for dimension of the system
 int __sys_dim__ = 0;
 double MyDistFun(const double *a, const double *b)
@@ -71,7 +77,7 @@ const bool TEST_TREE_VALIDITY = false;
 class RRT{
 public:
     double extend_radius;
-    Vector start, goal;
+    gVector start, goal;
     kd_tree_t *tree;
     std::vector<Env*> *envs;
     Env *env;
@@ -82,7 +88,7 @@ public:
     std::mutex m;
     bool resample_to_feasible;
 
-    void set_start_goal(const Vector &start_, const Vector &goal_) {
+    void set_start_goal(const gVector &start_, const gVector &goal_) {
         start = start_;
         goal = goal_;
     }
@@ -142,14 +148,14 @@ public:
     }
 
     // return the path
-    std::vector<Vector> get_path() {
-        std::vector<Vector> path;
+    std::vector<gVector> get_path() {
+        std::vector<gVector> path;
         if(goal_node->cost_so_far == std::numeric_limits<double>::infinity())
             return path;
-        std::list<Vector> list_q;
+        std::list<gVector> list_q;
         auto node = goal_node;
         while(node) {
-            list_q.push_front(Vector(node->value, node->value + env->dim));
+            list_q.push_front(gVector(node->value, node->value + env->dim));
             node = node->parent;
         }
         for(auto iter=list_q.begin(); iter != list_q.end(); iter++)
@@ -396,7 +402,7 @@ class NaocupEnv : public Env{
 public:
     prrts_system_t *system;
     void *system_data;
-    Vector start,goal;
+    gVector start,goal;
     //int thread_num;
     //NaocupEnv(int thread_num_){
     NaocupEnv() : Env(10){
@@ -447,6 +453,135 @@ public:
     }
     ~NaocupEnv() {}
 };
+
+#define DISCRETIZATION 0.01
+class KlamptEnv : public Env{
+public:
+    std::shared_ptr<Robot> robot;
+    RobotWorld world;
+    prrts_system_t *system;
+    gVector start;
+    gVector goal = {0.0,-0.9228,0.4403,0.0,0.0,0.0};
+    WorldPlannerSettings planner_settings;
+    //SingleRobotCSpace* robot_CSpace;
+    int index = 0;
+    KlamptEnv() : Env(6){
+        if(!world.LoadXML("klampt_data/tx90obstacles.xml")){
+            printf("Error loading robot world");
+        }
+        robot = world.robots[0];
+        auto tmp = robot->q;
+        auto tmp_min = robot->qMin;
+        auto tmp_max = robot->qMax;
+        for (int i = 1;i<7;i++){
+            start.push_back(tmp[i]);
+            max.push_back(tmp_max[i]);
+            min.push_back(tmp_min[i]); 
+        }
+        planner_settings.InitializeDefault(world);
+        //SingleRobotCSpace robot_CSpace2(world,0,&planner_settings);
+        //robot_CSpace = &robot_CSpace2;
+        //robot_CSpace->Init();
+        
+
+    }
+
+    bool is_clear(const double *v) {
+        Config shared;
+        shared.resize(7);
+        shared[0] = 0;
+        for(int i = 1;i<7;i++){
+            shared[i] = v[i-1];}
+        //copied from RobotCSpace.cpp
+        robot->UpdateConfig(shared);
+        robot->UpdateGeometry();
+        int id = world.RobotID(index);
+        vector<int> idrobot(1,id);
+        vector<int> idothers;
+        for(size_t i=0;i<world.terrains.size();i++)
+            idothers.push_back(world.TerrainID(i));
+        for(size_t i=0;i<world.rigidObjects.size();i++)
+            idothers.push_back(world.RigidObjectID(i));
+        for(size_t i=0;i<world.robots.size();i++) {
+            if((int)i != index)
+              idothers.push_back(world.RobotID(i));
+          }
+        //environment collision check
+          pair<int,int> res = planner_settings.CheckCollision(world,idrobot,idothers);
+          if(res.first >= 0) {
+            //printf("Collision found: %s (%d) - %s (%d)\n",world.GetName(res.first).c_str(),res.first,world.GetName(res.second).c_str(),res.second);
+            return false;
+          }
+          //self collision check
+          res = planner_settings.CheckCollision(world,idrobot);
+          if(res.first >= 0) {
+            //printf("Self-collision found: %s %s\n",world.GetName(res.first).c_str(),world.GetName(res.second).c_str());
+            return false;
+          }
+                return true;
+        }
+
+
+
+    bool is_free(const double *v1, const double *v2) {
+        double d = _MyDistFun(v1,v2);
+        double m[dim];
+        int i;
+
+        if (d < DISCRETIZATION) {
+            return true;
+        }
+
+        for (i=0 ; i<dim ; ++i) {
+                m[i] = (v1[i] + v2[i]) / 2.0;
+                //printf("%f",m[i]);
+        }
+        //printf("\n");
+
+
+        return is_clear(m)
+                && is_free(v1, m)
+                && is_free(m, v2);
+
+    }
+    void sample(double *x, int id, int num) {
+        if(num <= 1) {  // num if not greater than 1
+            double *p = x;
+            for(int i = 0; i < dim; i++) {
+                p[i] = ((double)rand() / RAND_MAX * (max[i] - min[i]) + min[i]);
+                //printf("%f",p[i]);
+            }
+        }
+        else{
+            for(int i=0;i<dim;i++){
+                if(i==REGION_SPLIT_AXIS){
+                    x[i] = (id + (double)rand() / RAND_MAX) / num * (max[i] - min[i]) + min[i];
+                }
+                else{
+                    x[i] = ((double)rand() / RAND_MAX * (max[i] - min[i]) + min[i]);
+                }
+            }
+        }
+        //printf("\n");
+    }
+
+    double _MyDistFun(const double *a, const double *b)
+    {
+    double dist = 0;
+    for(int i = 0; i < dim; i++)
+        dist += pow(a[i] - b[i], 2);
+    return sqrt(dist);
+    }
+
+
+    ~KlamptEnv() {}
+};
+
+
+
+
+
+
 
 bool check_tree_correctness(RRT_Node *start_node){
     RRT_Node *child_node = start_node->firstChild;
@@ -506,11 +641,25 @@ int main(int argc, char *argv[]) {
     srand(0);  // Yifan: uncomment this to have deterministic results
     printf("Debugging flag 0\n");
     
-    RRT rrt;
+    //KlamptEnv env;
+    // double collision_q[6] = {0,-0.9060,0,0,0,0};
+    // double free_q[6] = {0,0,0,0,0,0};
+    // double free_q2[6] = {0,0.6,0,0,0,0};
+    // bool flag = env.is_free(free_q,collision_q);
+    // if(flag){
+    // printf("\nCollision free \n");}
+    // else{
+    //   printf("\nCollisions \n");}  
+    // bool flag2 = env.is_free(free_q,free_q2);
+    // if(flag2){
+    // printf("\nCollision free \n");}
+    // else{
+    //   printf("\nCollisions \n");}  
     std::vector<Env*> envs;
     for(int i = 0; i < thread_num; i++)
-        //envs.push_back(new NaiveEnv);
-        envs.push_back(new NaocupEnv);
+        envs.push_back(new KlamptEnv);
+    RRT rrt;
+    rrt.set_envs(&envs);
     rrt.options->gamma = 5.0;
     //rrt.options->gamma = 0.5;
     rrt.set_envs(&envs);
@@ -542,6 +691,6 @@ int main(int argc, char *argv[]) {
     myfile.close();
     std::cout << "path size " << path.size() << " length " << rrt.get_path_length() << std::endl;
     for(auto _env : envs)
-        delete _env;
+       delete _env;
     return 0;
 }
