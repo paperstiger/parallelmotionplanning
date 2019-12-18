@@ -4,6 +4,7 @@
 #include <memory>
 #include <limits>
 #include <list>
+#include <tuple>
 #include "planner_common.h"
 #include "container.h"
 
@@ -47,27 +48,83 @@ public:
     memory_manager(int size_, int dim_) : size(size_), dim(dim_), inner_count(0) {
         data_region = (double*)malloc(size * dim * sizeof(double));
         node_region = malloc(size * sizeof(TreeNode));
+        data_regions.push_back(data_region);
+        node_regions.push_back(node_region);
+        inner_count = 0;
+        _last_piece_inner_count = 0;
+        _iter_mode = false;
+        _iter_vec_idx = 0;
     }
 
     std::pair<double*, TreeNode*> get_data_node() {
-        int cur_count = inner_count;
-        inner_count += 1;
-        return std::make_pair(data_region + cur_count * dim, (TreeNode*)node_region + cur_count);
+        if(!_iter_mode){
+            if(inner_count < size){
+                int cur_count = inner_count;
+                inner_count += 1;
+                _last_piece_inner_count = inner_count;
+                return std::make_pair(data_region + cur_count * dim, (TreeNode*)node_region + cur_count);
+            }
+            else{
+                // we have to allocate new memory
+                data_region = (double*)malloc(size * dim * sizeof(double));
+                node_region = malloc(size * sizeof(TreeNode));
+                data_regions.push_back(data_region);
+                node_regions.push_back(node_region);
+                inner_count = 0;
+                return get_data_node();
+            }
+        }
+        else{
+            if(inner_count < size) {
+                int cur_count = inner_count;
+                inner_count++;
+                return std::make_pair(data_region + cur_count * dim, (TreeNode*)node_region + cur_count);
+            }
+            else{
+                _iter_vec_idx++;
+                inner_count = 0;
+                data_region = data_regions[_iter_vec_idx];
+                node_region = node_regions[_iter_vec_idx];
+                return get_data_node();
+            }
+        }
     }
 
     void reset() {
-        inner_count = 0;
+        if(!_iter_mode) {  // we want to switch to iter mode
+            inner_count = 0;
+            _iter_vec_idx = 0;
+            data_region = data_regions[0];
+            node_region = node_regions[0];
+        }
+        else {
+            inner_count = _last_piece_inner_count;
+            data_region = data_regions.back();
+            node_region = node_regions.back();
+        }
+        _iter_mode = !_iter_mode;
+    }
+
+    int get_size() {
+        return _last_piece_inner_count + size * (data_regions.size() - 1);
     }
 
     ~memory_manager() {
-        free(node_region);
-        free(data_region);
+        for(auto node_r : node_regions)
+            free(node_r);
+        for(auto data_r : data_regions)
+            free(data_r);
     }
 
 private:
     int size, dim;  // size of nodes and dimension of data
+    std::vector<double*> data_regions;
+    std::vector<void*> node_regions;
     double *data_region;
     void *node_region;
     int inner_count;
+    int _last_piece_inner_count;
+    bool _iter_mode;
+    int _iter_vec_idx;
 };
 #endif

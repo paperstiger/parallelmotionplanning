@@ -27,9 +27,10 @@ I also want to test if I can manage memory on my own.
 
 // Ugly hack for dimension of the system
 int __sys_dim__ = 0;
-std::condition_variable cv;
-int to_processed;
-std::atomic<int> finished;
+std::atomic<int> planned_num;
+// std::condition_variable cv;
+// int to_processed;
+// std::atomic<int> finished;
 const bool TEST_TREE_VALIDITY = false;
 
 double MyDistFun(const double *a, const double *b)
@@ -67,7 +68,7 @@ bool RRT::plan_more(int num, int thread_num) {
         start_node = new RRT_Node;
         start_node->value = start.data();
         start_node->cost_so_far = 0;  // I do not modify cost_to_parent since it has no parents
-        __sys_dim__ = env->dim;  // TODO: remove this ugly hack for system dimension, maybe use std::function
+        __sys_dim__ = env->dim;
         tree = kd_create_tree(env->dim, env->min.data(), env->max.data(),
                     MyDistFun,
                     start.data(), start_node);
@@ -77,14 +78,23 @@ bool RRT::plan_more(int num, int thread_num) {
         tree_size.store(1, std::memory_order_relaxed);
     }
     std::vector<std::thread> threads;
-    managers.resize(thread_num);
-    to_processed = thread_num;
-    finished.store(0);
+    if(managers.size() == 0)  // haven't initialized yet
+        managers.resize(thread_num);
+    else
+        assert(managers.size() == thread_num);
+    //to_processed = thread_num;
+    //finished.store(0);
+    // this part controls how many we need total new nodes we need
+    int total_plan_count = num * thread_num;
+    planned_num.store(0);
+
     for(int i = 0; i < thread_num; i++) {
-        threads.push_back(std::thread(thread_fun, this, num, i));
+        threads.push_back(std::thread(thread_fun, this, total_plan_count, i));
     }
     for(auto &t : threads)
         t.join();
+    if(TEST_TREE_VALIDITY)  // if anyone want to test tree validity
+        this->test_tree_validity();
     return true;  // no exception raised means success
 }
 
@@ -119,14 +129,74 @@ std::vector<gVector> RRT::get_path() {
     return path;
 }
 
+// do recursive way of visiting each stuff
+// for each node, if it has children, we read root, read # nodes, and write nodes sequentially
+void tree_helper(TreeNode *root, std::ofstream &off, int dim, double &edge_size) {
+    if(root->firstChild) {
+        double *start = root->value;
+        off.write((char*)start, sizeof(double) * dim);
+        TreeNode *node = root->firstChild;
+        long child_size_buffer = off.tellp();
+        double child_num = 0;
+        off.write((char*)&child_num, sizeof(double));
+        while(node) {
+            off.write((char*)node->value, sizeof(double) * dim);
+            edge_size += 1;
+            node = node->nextSibling;
+            child_num += 1;
+        }
+        long finish_child_buffer = off.tellp();
+        off.seekp(child_size_buffer);
+        off.write((char*)&child_num, sizeof(double));
+        off.seekp(finish_child_buffer);
+        // then recursive on each child...
+        node = root->firstChild;
+        while(node) {
+            tree_helper(node, off, dim, edge_size);
+            node = node->nextSibling;
+        }
+    }
+}
+
+// this function basically saves the tree into a file, wait, I have to somehow keep the memory alive...
+// okay, do this now, and I can do plan_more whenever I want
+void RRT::serialize(const std::string &fnm) {
+    std::ofstream outfile(fnm, std::ofstream::binary);  // I will basically write everything down on this file, it may be huge though
+    // first write size of dimension
+    double dim = env->dim;
+    double edge_size = 0;
+    outfile.write((char*)&dim, sizeof(double));
+    long edge_pos = outfile.tellp();
+    outfile.write((char*)&edge_size, sizeof(double));
+    tree_helper(start_node, outfile, dim, edge_size);
+    long end_pos = outfile.tellp();
+    outfile.seekp(edge_pos);
+    outfile.write((char*)&edge_size, sizeof(double));
+    outfile.seekp(end_pos);  // this kinda of finish serializing the tree
+    // I still need to write the path, it should be quite straightforward
+    auto path = get_path();
+    // write size of the tree
+    double path_size = path.size();
+    outfile.write((char*)&path_size, sizeof(double));
+    for(auto &node : path)
+        outfile.write((char*)node.data(), sizeof(double) * dim);
+    outfile.close();
+}
+
 
 void thread_fun(RRT *problem, int sample_num, int thread_id)
 {
     int collision_check_counter = 0;
     Env *env = problem->envs->at(thread_id);
-    memory_manager *mem_pnter = new memory_manager(sample_num, problem->env->dim);
-    problem->managers[thread_id] = mem_pnter;
+    memory_manager *mem_pnter = nullptr;
     int thread_num = problem->managers.size();
+    int mean_expect_sample_num = sample_num / thread_num * 1.2;  // TODO: this 1.2 is somewhat a magic number
+    if(problem->managers[thread_id] == nullptr) {
+        mem_pnter = new memory_manager(mean_expect_sample_num, problem->env->dim);
+        problem->managers[thread_id] = mem_pnter;
+    }
+    else
+        mem_pnter = problem->managers[thread_id];
     auto &memory = *mem_pnter;
     list_pnter_dist nn_list;
     double goal_radius = 0.2;
@@ -134,10 +204,9 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
     RRT_Node *cmnnode;
     double *x = new double[problem->env->dim];
     int DIM = problem->env->dim;
-    for(int i = 0; i < sample_num; i++) {
+    while(planned_num.load() < sample_num){
         env->sample(x, thread_id, thread_num);
         if(!env->is_clear(x)) {
-            i--;
             continue;
         }
         // find closest point
@@ -165,11 +234,10 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
             // check collision
             collision_check_counter++;
             if(!env->is_free(x, near_node->value)) {  // sample is infeasible from near_node
-                if(problem->resample_to_feasible)
-                    i--;  // make sure enough feasible samples are collected
                 continue;
             }
             // create node and return, no rewiring is needed
+            planned_num.fetch_add(1, std::memory_order_relaxed);
             std::tie(cmndata, cmnnode) = memory.get_data_node();
             std::memcpy(cmndata, x, DIM * sizeof(double));
             cmnnode->init(cmndata);
@@ -193,6 +261,7 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                 //    continue;  // remove because goal is never in the tree
                 collision_check_counter++;
                 if(env->is_free(x, cand->value)) {  //  collision free, can add node
+                    planned_num.fetch_add(1, std::memory_order_relaxed);
                     std::tie(cmndata, cmnnode) = memory.get_data_node();
                     new_node_created = true;
                     std::memcpy(cmndata, x, DIM * sizeof(double));
@@ -227,7 +296,6 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                             RRT_Node *parent = cani->parent;
                             bool rmflag = parent->remove_child(cani);
                             if(!rmflag){
-                                std::cout << "at thread " << thread_id << " iteration " << i << "\n";
                                 continue;  // TODO: may remove cani from its new parents if possible
                             }
                             new_node->add_child(cani, cani_dist);
@@ -239,34 +307,34 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
                     break;
                 }
             }
-            if(problem->resample_to_feasible && (!new_node_created))
-                i--;
         }
     }
-    printf("number of collision checks is %d\n",collision_check_counter);
-
+    printf("number of collision checks in thread %d is %d\n", thread_id, collision_check_counter);
     delete[] x;
-    finished.fetch_add(1);
-    std::unique_lock<std::mutex> lk(problem->m);
-    cv.wait(lk, []{return to_processed == finished;});
+    // finished.fetch_add(1);
+    // std::unique_lock<std::mutex> lk(problem->m);
+    // cv.wait(lk, []{return to_processed == finished;});
+    // lk.unlock();
+    // cv.notify_one();
+}
 
-    //check if trees is valid
-    if(TEST_TREE_VALIDITY) {
-        if(thread_id == 0){
-            if (check_tree_correctness(problem->start_node)){
-                std::cout << "Tree Valid " << std::endl;
-            }
-            else{
-                std::cout << "Tree InValid " << std::endl;
-            }
-        }
-        //now check if there is any node "floating"
+bool RRT::test_tree_validity() {
+    if (check_tree_correctness(this->start_node)){
+        std::cout << "Tree Valid " << std::endl;
+    }
+    else{
+        std::cout << "Tree InValid " << std::endl;
+    }
+    int thread_id = 0;
+    for(auto memptr : this->managers){
+        int counter = 0;
+        memory_manager &memory = *memptr;
+        int mem_size = memory.get_size();
         memory.reset(); 
         double *tmpdata;
         RRT_Node *tmpnode;
-        int counter = 0;
-        for (int i = 0; i < sample_num ; i++){    
-            std::tie(tmpdata, tmpnode)=memory.get_data_node();
+        for (int i = 0; i < mem_size ; i++){    
+            std::tie(tmpdata, tmpnode) = memory.get_data_node();
             if (tmpnode->parent == nullptr) {
                 counter++;
             }
@@ -274,13 +342,20 @@ void thread_fun(RRT *problem, int sample_num, int thread_id)
             {
                 counter++;
             }
-            
         }
-        std::cout << "thread:"<< " " <<thread_id  << " " << "has " << counter << " " << "have parental issues" << std::endl;
+        std::cout << "thread:"<< " " <<thread_id++  << " " << "has " << counter << " " << "have parental issues" << std::endl;
     }
-    tl_free(&problem->tree->mempool, NULL);
-    lk.unlock();
-    cv.notify_one();
+}
+
+bool check_tree_correctness(RRT_Node *start_node){
+    RRT_Node *child_node = start_node->firstChild;
+    while(child_node != nullptr){
+        if(!check_node_correctness(child_node)){
+            return false;
+        }
+        child_node = child_node->nextSibling;
+    }
+    return true;
 }
 
 bool check_node_correctness(RRT_Node *node){

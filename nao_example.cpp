@@ -74,7 +74,6 @@ int main(int argc, char *argv[]) {
     }
     std::cout << "Running with " << thread_num << " threads\n";
     srand(time(0));  // Yifan: uncomment this to have deterministic results
-    printf("Debugging flag 0\n");
     
     std::vector<Env*> envs;
     for(int i = 0; i < thread_num; i++)

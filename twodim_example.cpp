@@ -47,14 +47,19 @@ public:
 int main(int argc, char *argv[]) {
     int thread_num = 1;
     int sample_num = 100;
+    std::string tree_save_fnm;
     if(argc > 1) {
         thread_num = std::atoi(argv[1]);
         if(argc > 2) {
             sample_num = std::atoi(argv[2]);
+            if(argc > 3) {
+                tree_save_fnm = std::string(argv[3]);
+            }
         }
     }
     std::cout << "Running with " << thread_num << " threads\n";
-    srand(time(0));  // Yifan: uncomment this to have deterministic results
+    //srand(time(0));  // Yifan: uncomment this to have deterministic results
+    srand(0);
     printf("Debugging flag 0\n");
     
     std::vector<Env*> envs;
@@ -62,7 +67,7 @@ int main(int argc, char *argv[]) {
         envs.push_back(new NaiveEnv);
     RRT rrt;
     rrt.set_envs(&envs);
-    rrt.options->gamma = 0.3;
+    rrt.options->gamma = 0.4;
     rrt.set_envs(&envs);
     NaiveEnv env;
     rrt.set_start_goal({0, 0}, {1, 1});
@@ -82,6 +87,10 @@ int main(int argc, char *argv[]) {
     }
     myfile.close();
     std::cout << "path size " << path.size() << " length " << rrt.get_path_length() << std::endl;
+    // we may output the tree
+    if(tree_save_fnm.size() > 0) {
+        rrt.serialize(tree_save_fnm);
+    }
     for(auto _env : envs)
        delete _env;
     return 0;
